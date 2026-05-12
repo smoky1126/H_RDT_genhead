@@ -19,6 +19,8 @@ from PIL import Image
 from torchvision import transforms
 from torchvision.transforms import functional as F
 import cv2
+from datasets.multi_hdf5_vla_dataset import MultiHDF5VLADataset
+from datasets.robotwin2.robotwin_agilex_dataset import RobotwinAgilexDataset, HumanToRobotDataset
 
 
 class VLAConsumerDataset(Dataset):
@@ -40,13 +42,22 @@ class VLAConsumerDataset(Dataset):
         use_precomp_lang_embed=True,
         upsample_rate=None,
         val=False,
-        task_name="open_laptop",
-        dataset_name="test_robotwin",  # Add dataset_name parameter
+        task_name="adjust_bottle",
+        dataset_name="robotwin_agilex",  # Add dataset_name parameter
     ):
         super(VLAConsumerDataset, self).__init__()
-        self.dataset_name = dataset_name
-        DATASET_NAMES = {self.dataset_name}
-        
+        if dataset_type is not None:
+            self.dataset_name = dataset_type
+        else:
+            self.dataset_name = dataset_name
+
+        DATASET_NAMES = {
+            "robotwin_agilex", 
+            "human_robot_bridge",  # Verify this matches the name in HumanToRobotDataset
+            "co_finetune", 
+            "egodex"
+        }
+
         # Create the mapping between dataset name and id
         self.dataset_name2id = {name: i for i, name in enumerate(DATASET_NAMES)}
         self.dataset_id2name = {i: name for i, name in enumerate(DATASET_NAMES)}
@@ -58,16 +69,28 @@ class VLAConsumerDataset(Dataset):
 
         # Initialize dataset based on dataset_name
         if self.dataset_name == "egodex":
+            # self.hdf5_dataset = EgoDexDataset(
+            #     config=config,
+            #     upsample_rate=upsample_rate,
+            #     val=val,
+            #     use_precomp_lang_embed=use_precomp_lang_embed,
+            data_root = os.environ.get("EGODEX_DATA_ROOT")
+            if not data_root:
+                raise ValueError("EGODEX_DATA_ROOT is missing or empty!")
+
             self.hdf5_dataset = EgoDexDataset(
+                data_root=data_root, 
                 config=config,
                 upsample_rate=upsample_rate,
                 val=val,
                 use_precomp_lang_embed=use_precomp_lang_embed,
+            )
+
                 # Note: override default paths if needed
                 # data_root="/path/to/egodex",
                 # stat_path="/path/to/custom/egodex_stat.json",
-            )
         elif self.dataset_name == "robotwin_agilex":
+            '''
             self.hdf5_dataset = RobotwinAgilexDataset(
                 mode="multi_task",
                 config=config,
@@ -77,14 +100,60 @@ class VLAConsumerDataset(Dataset):
             '''
             self.hdf5_dataset = RobotwinAgilexDataset(
                 mode="single_task",
-                task_name=task_name,
-                hdf5_folder="Aloha-AgileX/data",
-                max_episodes=50,
-                config=config
+                task_name="adjust_bottle",
+                #added this (by andrew),
+                hdf5_folder="aloha-agilex_clean_50/data",
+                max_episodes=config.get("dataset", {}).get("max_robot_episodes", 50),
+                config=config,
                 # Note: override default paths
-                # single_task_root_dir="/path/to/your/robotwin2/single",
+                single_task_root_dir="/home/ubuntu/RoboTwin/dataset",
             )
-            '''
+
+        elif self.dataset_name == "human_robot_bridge":
+            print("🎯 Loading Vision Pro Human Data (500 episodes)")
+            data_path = "/home/ubuntu/human-policy/data/recordings/processed_baseline_robot_frame"
+            print(f"📂 Data path: {data_path}/adjust_bottle/.")  # ← Now data_path is defined!
+            self.hdf5_dataset = HumanToRobotDataset(
+                mode="single_task",
+                task_name="adjust_bottle",
+                hdf5_folder=".",
+                max_episodes=None,
+                config=config,
+                single_task_root_dir=data_path,
+            )
+
+
+        elif self.dataset_name == "co_finetune":
+            print("🧠 Initializing Co-Finetuning: 50% Robot | 50% Human")
+
+            # 1. Robot Dataset (Real AgileX Data)
+            # CHANGE 'hdf5_folder' and 'root_dir' to match your actual robot data path
+            robot_ds = RobotwinAgilexDataset(
+                mode="single_task",
+                task_name=task_name,
+                hdf5_folder="aloha-agilex_clean_50/data", 
+                max_episodes=None,
+                config=config,
+                single_task_root_dir="/home/ubuntu/RoboTwin/dataset" 
+            )
+
+            # 2. Human Dataset (Your New Data)
+            # CHANGE 'root_dir' to your generated data path
+            human_ds = HumanToRobotDataset(
+                mode="single_task",
+                task_name=task_name,
+                hdf5_folder=".", # Folder inside task_name
+                max_episodes=None,
+                config=config,
+                single_task_root_dir="/home/ubuntu/human-policy/data/recordings/processed_baseline_robot_frame"
+            )
+
+            # 3. Mix Them
+            self.hdf5_dataset = MultiHDF5VLADataset(
+                dataset_list=[robot_ds, human_ds],
+                dataset_weights=[0.5, 0.5]  # 50% Robot, 30% Human
+            )    
+        
         else:
             raise ValueError(f"Unknown dataset_name: {self.dataset_name}")
             
@@ -218,7 +287,11 @@ class VLAConsumerDataset(Dataset):
                 data_dict["lang_embeds"] = res["instruction"]
             else:
                 # Legacy: load from file path
-                data_dict["lang_embeds"] = torch.load(res["instruction"])["embeddings"].squeeze(0)
+                pt_data = torch.load(res["instruction"])
+                data_dict["lang_embeds"] = pt_data["embeddings"].squeeze(0)
+                # Load token IDs if available (for reasoning auxiliary loss)
+                if "token_ids" in pt_data:
+                    data_dict["reasoning_token_ids"] = pt_data["token_ids"]
 
         # Convert all numpy arrays to torch tensors
         for k, v in data_dict.items():
@@ -250,6 +323,8 @@ class DataCollatorForVLAConsumerDataset(object):
         if self.use_precomp_lang_embed:
             lang_embeds = []
             lang_embed_lens = []
+        reasoning_token_ids_list = []
+        has_reasoning_tokens = False
 
         # Process each instance in the batch
         for instance in instances:
@@ -272,6 +347,9 @@ class DataCollatorForVLAConsumerDataset(object):
             if self.use_precomp_lang_embed and "lang_embeds" in instance:
                 lang_embeds.append(instance["lang_embeds"])
                 lang_embed_lens.append(instance["lang_embeds"].shape[0])
+            if "reasoning_token_ids" in instance:
+                reasoning_token_ids_list.append(instance["reasoning_token_ids"])
+                has_reasoning_tokens = True
 
         # Stack tensors for numeric data
         keys_to_stack = [
@@ -302,5 +380,10 @@ class DataCollatorForVLAConsumerDataset(object):
                 input_lang_attn_mask[i, :l] = True
             batch["lang_embeds"] = lang_embeds
             batch["lang_attn_mask"] = input_lang_attn_mask
+        if has_reasoning_tokens and len(reasoning_token_ids_list) == len(instances):
+            batch["reasoning_token_ids"] = torch.nn.utils.rnn.pad_sequence(
+                reasoning_token_ids_list,
+                batch_first=True,
+                padding_value=0)  # pad_token_id=0 for T5
 
         return batch

@@ -143,7 +143,7 @@ class HRDT(nn.Module):
         """Enable gradient checkpointing to save memory"""
         self.gradient_checkpointing = value
 
-    def forward(self, x, t, img_c=None, lang_c=None, sentence_c=None, task_c=None, lang_attn_mask=None):
+    def forward(self, x, t, img_c=None, lang_c=None, sentence_c=None, task_c=None, lang_attn_mask=None, return_hidden=False):
         """
         Forward pass of H-RDT
 
@@ -154,8 +154,10 @@ class HRDT(nn.Module):
             lang_c: (B, S_lang, D), language tokens for cross-attention, optional
             sentence_c: ignored (for backward compatibility)
             lang_attn_mask: (B, S_lang), attention mask for language tokens, optional
+            return_hidden: if True, also return hidden states before action_decoder
         Returns:
             x: (B, T, D_out), predicted denoised action tokens
+            hidden: (B, 1+T, D), hidden states before action_decoder (only if return_hidden=True)
         """
         # Embed timestep using sinusoidal embeddings
         t_emb = self.t_embedder(t)  # (B, D) or (1, D)
@@ -183,10 +185,15 @@ class HRDT(nn.Module):
             else:
                 x = block(x, t_emb, cross_contexts)
 
+        # Store hidden states before action_decoder
+        hidden = x
+
         # Final layer only uses timestep (no cross-attention)
         x = self.action_decoder(x, t_emb)
 
         # Extract action predictions
         x = x[:, -self.horizon:]
 
+        if return_hidden:
+            return x, hidden
         return x

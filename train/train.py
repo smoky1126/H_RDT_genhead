@@ -203,6 +203,67 @@ def train(args, logger):
     for param in vision_encoder.parameters():
         param.requires_grad = False
 
+    # Freeze backbone if requested (finetune mode only)
+    # Only trains action_encoder and action_decoder
+    # Preserves all LSS-shaped priors from Stage 2
+    if hasattr(args, 'freeze_backbone') and args.freeze_backbone and args.mode == 'finetune':
+        frozen_count = 0
+        trainable_count = 0
+        for name, param in hrdt.named_parameters():
+            if any(k in name for k in [
+                'action_encoder',    # robot joint encoding (random init)
+                'action_decoder',    # robot action prediction (random init)
+                'model.img_pos_emb', # reinitialized for 3 cameras, must adapt
+                'img_adapter',       # image projection to transformer space
+                'lang_adapter',      # language projection, adapts to short instruction
+            ]):
+                param.requires_grad = True
+                trainable_count += 1
+            else:
+                param.requires_grad = False
+                frozen_count += 1
+        logger.info(f"Backbone frozen: {frozen_count} params frozen, {trainable_count} params trainable")
+        logger.info("Frozen: model.blocks, t_embedder, x_pos_emb, lang_pos_emb (LSS priors preserved)")
+        logger.info("Trainable: action_encoder, action_decoder, img_pos_emb, img_adapter, lang_adapter")
+
+    # Initialize ReasoningHead if requested (pretrain mode only, training-only scaffold)
+    reasoning_head = None
+    if hasattr(args, 'use_reasoning_head') and args.use_reasoning_head and args.mode == 'pretrain':
+        from models.hrdt_runner import ReasoningHead
+        reasoning_head = ReasoningHead(hidden_size=2176, vocab_size=32100, max_seq_len=150)
+        reasoning_head = reasoning_head.to(accelerator.device, dtype=weight_dtype)
+        logger.info("ReasoningHead initialized for auxiliary reasoning loss")
+
+    # Initialize LSAHead if requested (pretrain mode only, training-only scaffold)
+    lsa_head = None
+    if hasattr(args, 'use_lsa') and args.use_lsa and args.mode == 'pretrain':
+        from models.hrdt_runner import LSAHead
+        lsa_head = LSAHead(hidden_size=2176, t5_dim=4096)
+        lsa_head = lsa_head.to(accelerator.device, dtype=weight_dtype)
+        logger.info("LSAHead initialized for latent semantic alignment loss")
+
+    # create custom saving & loading hooks so that `accelerator.save_state(...)` serializes in a nice format
+    # which ensure saving model in huggingface format (config.json + pytorch_model.bin)
+    # Apply LoRA if requested (pretrain mode only)
+    if args.use_lora and args.mode == 'pretrain':
+        from peft import LoraConfig, get_peft_model
+        logger.info(f"Applying LoRA with rank={args.lora_rank}, alpha={args.lora_alpha}")
+        lora_config = LoraConfig(
+            r=args.lora_rank,
+            lora_alpha=args.lora_alpha,
+            target_modules=[
+                "attn.wq", "attn.wkv", "attn.wo",
+                "img_cross_attn.wq", "img_cross_attn.wkv", "img_cross_attn.wo",
+                "lang_cross_attn.wq", "lang_cross_attn.wkv", "lang_cross_attn.wo",
+                "ffn.w1", "ffn.w2", "ffn.w3"
+            ],
+            lora_dropout=0.05,
+            bias="none",
+        )
+        hrdt = get_peft_model(hrdt, lora_config)
+        hrdt.print_trainable_parameters()
+        logger.info("LoRA applied successfully")
+
     # create custom saving & loading hooks so that `accelerator.save_state(...)` serializes in a nice format
     # which ensure saving model in huggingface format (config.json + pytorch_model.bin)
     def save_model_hook(models, weights, output_dir):
@@ -210,9 +271,19 @@ def train(args, logger):
             for model in models:
                 model_to_save = model.module if hasattr(model, "module") else model  # type: ignore
                 if isinstance(model_to_save, type(accelerator.unwrap_model(hrdt))):
-                    model_to_save.save_pretrained(output_dir)
+                    if hasattr(args, 'use_lora') and args.use_lora and args.mode == 'pretrain':
+                        # Merge LoRA weights into a copy, keep original intact for training
+                        logger.info("Merging LoRA weights before saving...")
+                        import copy
+                        model_copy = copy.deepcopy(model_to_save)
+                        merged = model_copy.merge_and_unload()
+                        merged.save_pretrained(output_dir)
+                        del model_copy, merged
+                    else:
+                        model_to_save.save_pretrained(output_dir)
 
     accelerator.register_save_state_pre_hook(save_model_hook)
+
 
     # Enable gradient checkpointing if needed
     if args.gradient_checkpointing:
@@ -242,7 +313,17 @@ def train(args, logger):
         optimizer_class = torch.optim.AdamW
 
     # Create optimizer for trainable parameters
-    params_to_optimize = hrdt.parameters()
+    # If freeze_backbone, only pass trainable params to optimizer
+    # DeepSpeed ZeRO cannot handle lr=0 param groups
+    if hasattr(args, 'freeze_backbone') and args.freeze_backbone and args.mode == 'finetune':
+        params_to_optimize = [p for n, p in hrdt.named_parameters()
+                              if any(k in n for k in [
+                                  'action_encoder', 'action_decoder',
+                                  'model.img_pos_emb', 'img_adapter', 'lang_adapter'
+                              ]) and p.requires_grad]
+        logger.info(f"Optimizer: {len(params_to_optimize)} trainable params only")
+    else:
+        params_to_optimize = hrdt.parameters()
     optimizer = optimizer_class(
         params_to_optimize,
         lr=args.learning_rate,
@@ -250,6 +331,11 @@ def train(args, logger):
         weight_decay=args.adam_weight_decay,
         eps=args.adam_epsilon,
     )
+
+    # Inject max_robot_episodes into config for dataset
+    if hasattr(args, "max_robot_episodes"):
+        config["dataset"]["max_robot_episodes"] = args.max_robot_episodes
+        logger.info(f"Using {args.max_robot_episodes} robot episodes for finetuning")
 
     # Create dataset and dataloader
     train_dataset = VLAConsumerDataset(
@@ -422,12 +508,24 @@ def train(args, logger):
                 print(batch["lang_embeds"].shape)
 
                 # Compute loss
-                loss_dict = hrdt.compute_loss(
+                _hrdt = accelerator.unwrap_model(hrdt) if (hasattr(args, 'use_lora') and args.use_lora) else hrdt
+                # Get reasoning token IDs if available
+                reasoning_token_ids = None
+                if reasoning_head is not None and "reasoning_token_ids" in batch:
+                    reasoning_token_ids = batch["reasoning_token_ids"].to(accelerator.device)
+                loss_dict = _hrdt.compute_loss(
                     state_tokens=batch["states"].to(dtype=weight_dtype),
                     action_gt=batch["actions"].to(dtype=weight_dtype),
                     image_tokens=image_features,
                     lang_tokens=lang_embeds,
                     lang_attn_mask=lang_attn_mask,
+                    reasoning_token_ids=reasoning_token_ids,
+                    reasoning_head=reasoning_head,
+                    reasoning_lambda=args.reasoning_lambda if hasattr(args, 'reasoning_lambda') else 0.1,
+                    lsa_head=lsa_head,
+                    lsa_embeddings=lang_embeds,
+                    lsa_attn_mask=batch["lang_attn_mask"].to(accelerator.device) if "lang_attn_mask" in batch else None,
+                    lsa_lambda=args.lsa_lambda if hasattr(args, 'lsa_lambda') else 0.1,
                 )
                 
                 loss = loss_dict["loss"]
@@ -480,8 +578,17 @@ def train(args, logger):
     # Save the final model
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
-        accelerator.unwrap_model(hrdt).save_pretrained(args.output_dir)
-
+        final_model = accelerator.unwrap_model(hrdt)
+        if hasattr(args, 'use_lora') and args.use_lora and args.mode == 'pretrain':
+            import copy
+            logger.info("Merging LoRA weights for final save...")
+            model_copy = copy.deepcopy(final_model)
+            merged = model_copy.merge_and_unload()
+            merged.save_pretrained(args.output_dir)
+            del model_copy, merged
+            logger.info("LoRA weights merged and saved.")
+        else:
+            final_model.save_pretrained(args.output_dir)
         logger.info(f"Saved Model to {args.output_dir}")
 
         if args.push_to_hub:

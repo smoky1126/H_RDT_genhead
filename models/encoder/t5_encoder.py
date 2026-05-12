@@ -3,7 +3,10 @@ from transformers import AutoTokenizer, T5EncoderModel
 
 
 class T5Embedder:
-    available_models = ["/data/lingxuan/weights/t5-v1_1-xxl"]
+    available_models = ["/data/lingxuan/weights/t5-v1_1-xxl",
+                        "google/t5-v1_1-xxl",
+                        "/home/ubuntu/H_RDT/models/t5-v1_1-xxl"
+                        ]
 
     def __init__(
         self,

@@ -4,8 +4,9 @@
 # Set your paths here
 
 # Required paths - modify these according to your environment
-export ROBOTWIN2_DATA_ROOT="/share/hongzhe/datasets/robotwin2/dataset/aloha-agilex"
-export T5_MODEL_PATH="/data/lingxuan/weights/t5-v1_1-xxl"
+export ROBOTWIN2_DATA_ROOT="/home/ubuntu/RoboTwin/dataset/adjust_bottle/aloha-agilex_clean_50"
+export T5_MODEL_PATH="/home/ubuntu/H_RDT/models/t5-v1_1-xxl"
+
 
 # Project structure (auto-detected)
 export HRDT_PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -13,9 +14,9 @@ export HRDT_CONFIG_PATH="${HRDT_PROJECT_ROOT}/configs/hrdt_finetune.yaml"
 export HRDT_OUTPUT_DIR="${HRDT_PROJECT_ROOT}/datasets/robotwin2"
 
 # Processing parameters
-export NUM_PROCESSES=64
-export NUM_GPUS=8
-export PROCESSES_PER_GPU=6
+export NUM_PROCESSES=2
+export NUM_GPUS=2
+export PROCESSES_PER_GPU=1
 
 # Create output directory
 mkdir -p "$HRDT_OUTPUT_DIR"

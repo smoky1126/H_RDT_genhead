@@ -588,3 +588,99 @@ if __name__ == "__main__":
             print(f"States shape: {item['states'].shape}")
     
     print(f"\nResult: Successfully loaded {success_count}/{test_times} samples") 
+
+class HumanToRobotDataset(RobotwinAgilexDataset):
+    """
+    Adapter for Co-Training:
+    1. Loads Human Data (14D Action + Text + Head Cam).
+    2. Fakes Wrist Cams (Black Images) to match Robot Format.
+    3. Inherits Normalization/Logic from RobotwinAgilexDataset.
+    """
+    def extract_episode_item(self, hdf5_file):
+        try:
+            with h5py.File(hdf5_file, 'r', swmr=True, libver='latest') as f:
+                # 1. LOAD ACTIONS (14D)
+                # Your validation script confirmed these keys exist and are correct.
+                try:
+                    l_arm = f['joint_action/left_arm'][:]       # (T, 6)
+                    r_arm = f['joint_action/right_arm'][:]      # (T, 6)
+                    l_grip = f['joint_action/left_gripper'][:]  # (T, 1)
+                    r_grip = f['joint_action/right_gripper'][:] # (T, 1)
+
+                    # Ensure shapes are 2D for concatenation
+                    if l_grip.ndim == 1: l_grip = l_grip[:, None]
+                    if r_grip.ndim == 1: r_grip = r_grip[:, None]
+
+                    # Concatenate to 14D: [LeftArm, LeftGrip, RightArm, RightGrip]
+                    action_data = np.concatenate([l_arm, l_grip, r_arm, r_grip], axis=1)
+                except Exception as e:
+                    print(f"Error loading actions in {hdf5_file}: {e}")
+                    return None
+
+                # 2. DATA SAMPLING (Standard logic)
+                max_index = len(action_data) - 2
+                if max_index < 1: return None # Skip tiny episodes
+                
+                # Randomly sample a start point
+                index = random.randint(0, max_index)
+                
+                # Get Action Chunk
+                action_current = action_data[index]
+                action_end = min(index + self.chunk_size * self.upsample_rate, max_index + 1)
+                action_chunk = action_data[index+1:action_end+1:self.upsample_rate]
+                
+                # Padding if chunk is too short
+                if action_chunk.shape[0] < self.chunk_size:
+                    last_part = np.repeat(action_chunk[-1:], self.chunk_size - action_chunk.shape[0], axis=0)
+                    action_chunk = np.concatenate([action_chunk, last_part], axis=0)
+
+                # 3. IMAGES (The "Fake 3-View" Trick)
+                try:
+                    ego_key = "observation/head_camera/rgb"
+                    
+                    if ego_key in f:
+                        # A. Load Real Head Camera
+                        ego_frames = self.parse_img_data(f[ego_key], index) # [T, H, W, 3]
+                        
+                        # B. Create Fake Wrist Cameras (Black)
+                        black_frames = np.zeros_like(ego_frames)
+                        
+                        # C. Stack: [Head (Real), Right (Fake), Left (Fake)]
+                        # Order must match self.cameras list in the parent class
+                        img_frames_np = np.stack([ego_frames, black_frames, black_frames], axis=0)
+                        
+                        # D. Create Mask: [True, False, False]
+                        # True = Valid (Model learns from this)
+                        # False = Padding (Model ignores this)
+                        mask_len = self.img_history_size
+                        current_images_mask = [
+                            np.full(mask_len, True, dtype=bool),   # Head: VALID
+                            np.full(mask_len, False, dtype=bool),  # Right: IGNORE
+                            np.full(mask_len, False, dtype=bool)   # Left: IGNORE
+                        ]
+                    else:
+                        print(f"Missing camera key {ego_key}")
+                        return None
+                except Exception as e:
+                    print(f"Error loading images: {e}")
+                    return None
+
+                # 4. LANGUAGE INSTRUCTION
+                # We verified this is now a Dataset, so standard loading works.
+                language_embedding = self.load_language_embedding(hdf5_file)
+                if language_embedding is None: return None
+
+                # 5. RETURN BATCH
+                return {
+                    "current_images": img_frames_np,
+                    "current_images_mask": current_images_mask, # <--- The Mask makes co-training possible
+                    "actions": action_chunk,
+                    "states": np.expand_dims(action_current, axis=0),
+                    "state_indicator": np.ones_like(action_current),
+                    "action_norm": np.ones_like(action_chunk),
+                    "instruction": language_embedding,
+                    "dataset_name": self.DATASET_NAME,
+                }
+        except Exception as e:
+            print(f"Error processing file {hdf5_file}: {e}")
+            return None

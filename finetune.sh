@@ -1,16 +1,25 @@
-export NCCL_IB_HCA=mlx5_0:1,mlx5_1:1,mlx5_2:1,mlx5_3:1,mlx5_4:1,mlx5_7:1,mlx5_8:1,mlx5_9:1
-export NCCL_IB_DISABLE=0
-export NCCL_SOCKET_IFNAME=bond0
+# Remove/disable cluster-specific NCCL settings:
+# export NCCL_IB_HCA=mlx5_0:1,mlx5_1:1,mlx5_2:1,mlx5_3:1,mlx5_4:1,mlx5_7:1,mlx5_8:1,mlx5_9:1
+# export NCCL_IB_DISABLE=0
+# export NCCL_SOCKET_IFNAME=bond0
+
+#local NCCL setting
+unset NCCL_SOCKET_IFNAME
+export NCCL_SOCKET_IFNAME=eth0
+export NCCL_IB_DISABLE=1
+export NCCL_P2P_DISABLE=1
 export NCCL_DEBUG=INFO
 export NCCL_NVLS_ENABLE=0
-export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
-
+#GPUs
+export CUDA_VISIBLE_DEVICES=0,1
 export CFLAGS="-I/usr/include"
 export LDFLAGS="-L/usr/lib/x86_64-linux-gnu"
-export CUTLASS_PATH="/data/lingxuan/cutlass"
+#export CUTLASS_PATH="/data/lingxuan/cutlass"
 
-export WANDB_PROJECT="hrdt"
-export OUTPUT_DIR="./checkpoints/robotwin2"
+export WANDB_PROJECT="hrdt_adjust_bottle_reasoning_mar17"
+export PRETRAINED_CHECKPOINT="./checkpoints/pretrain-0618/checkpoint-500000/pytorch_model.bin"
+export OUTPUT_DIR="./checkpoints/model_a_data_eff_25ep_mar31"
+
 
 export VISION_ENCODER_NAME="dino-siglip"
 
@@ -26,30 +35,42 @@ fi
 #     --deepspeed="./configs/zero2.json" \
 #     ...
 
-accelerate launch --main_process_port 29500 main.py \
+#note: train_batch_size is per device
+
+# Original setup: accelerate launch --main_process_port 29500 main.py \
+# --deepspeed="./configs/zero1.json" \
+# --max_train_steps=1000000 \
+#WANDB_RUN_ID="ptic4v0o" WANDB_RESUME="allow" 
+accelerate launch main.py \
     --pretrained_vision_encoder_name_or_path=$VISION_ENCODER_NAME \
-    --deepspeed="./configs/zero1.json" \
+    --deepspeed="./configs/zero2.json" \
     --config_path="configs/hrdt_finetune.yaml" \
     --output_dir=$OUTPUT_DIR \
-    --train_batch_size=32 \
-    --sample_batch_size=32 \
-    --max_train_steps=1000000 \
-    --checkpointing_period=5000 \
+    --train_batch_size=16 \
+    --sample_batch_size=1 \
+    --max_train_steps=22000 \
+    --checkpointing_period=3000 \
     --sample_period=500 \
-    --checkpoints_total_limit=40 \
+    --checkpoints_total_limit=5 \
     --lr_scheduler="constant_with_warmup" \
     --learning_rate=1e-4 \
     --mixed_precision="bf16" \
-    --dataloader_num_workers=32 \
-    --dataset_type="finetune" \
+    --dataloader_num_workers=2 \
+    --dataset_type="robotwin_agilex" \
     --report_to=wandb \
     --upsample_rate=3 \
     --image_aug \
-    --gradient_checkpointing \
     --precomp_lang_embed \
     --training_mode="lang" \
     --mode="finetune" \
-    --pretrained_backbone_path="./checkpoints/pretrain-0618/checkpoint-500000/pytorch_model.bin"
+    --max_robot_episodes=25 \
+    --pretrained_backbone_path="$PRETRAINED_CHECKPOINT" \
+    --task_name="adjust_bottle" \
+    #--resume_from_checkpoint="checkpoint-3000" \
+
+    #--gradient_checkpointing \
+    
+    #pretrained_backbone_path="./checkpoints/pretrain-0618/checkpoint-500000/pytorch_model.bin"
 
     # For finetune mode with specific robot embodiment, use these parameters instead:
     # --mode="finetune" \

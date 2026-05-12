@@ -13,6 +13,46 @@ from utils.hub_mixin import CompatiblePyTorchModelHubMixin
 from models.hrdt.model import HRDT
 
 
+class ReasoningHead(nn.Module):
+    """
+    Auxiliary reasoning prediction head.
+    Training-only scaffold — never saved, never used at inference.
+    """
+    def __init__(self, hidden_size=2176, vocab_size=32100, max_seq_len=150):
+        super().__init__()
+        self.context_proj = nn.Linear(hidden_size, hidden_size)
+        self.pos_emb = nn.Embedding(max_seq_len, hidden_size)
+        self.output_proj = nn.Linear(hidden_size, vocab_size)
+        self.max_seq_len = max_seq_len
+
+    def forward(self, state_hidden, seq_len):
+        positions = torch.arange(seq_len, device=state_hidden.device)
+        pos_emb = self.pos_emb(positions)
+        context = self.context_proj(state_hidden).unsqueeze(1) + pos_emb.unsqueeze(0)
+        logits = self.output_proj(context)
+        return logits
+
+
+class LSAHead(nn.Module):
+    """
+    Latent Semantic Alignment head.
+    Projects image-grounded action tokens to T5 reasoning embedding space.
+    Training-only scaffold — never saved, never used at inference.
+    """
+    def __init__(self, hidden_size=2176, t5_dim=4096):
+        super().__init__()
+        self.proj = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size),
+            nn.GELU(),
+            nn.Linear(hidden_size, t5_dim)
+        )
+
+    def forward(self, action_hidden):
+        # action_hidden: (B, 16, hidden_size) — action tokens after img cross-attn
+        pooled = action_hidden.mean(dim=1)  # (B, hidden_size)
+        return self.proj(pooled)            # (B, t5_dim)
+
+
 class SigmoidTimestepSampler:
     """
     LogitNormal sampler  
@@ -273,7 +313,7 @@ class HRDTRunner(
         if hasattr(self.model, "gradient_checkpointing_enable"):
             self.model.gradient_checkpointing_enable(value)
 
-    def compute_loss(self, state_tokens=None, action_gt=None, image_tokens=None, lang_tokens=None, lang_attn_mask=None):
+    def compute_loss(self, state_tokens=None, action_gt=None, image_tokens=None, lang_tokens=None, lang_attn_mask=None, reasoning_token_ids=None, reasoning_head=None, reasoning_lambda=0.1, lsa_head=None, lsa_embeddings=None, lsa_attn_mask=None, lsa_lambda=0.1):
         """
             img_tokens: (batch_size, img_len, img_token_dim)
             state_tokens: (batch_size, chunk_size, action_dim), 
@@ -303,11 +343,48 @@ class HRDTRunner(
         action_traj = self.action_encoder.encode_action(noisy_action)
         state_action_traj = torch.cat([state_traj, action_traj], dim=1)
 
-        pred = self.model(state_action_traj, timesteps, img_c=img_c, lang_c=lang_c, lang_attn_mask=lang_attn_mask)
+        use_reasoning = (reasoning_token_ids is not None and reasoning_head is not None)
+        use_lsa = (lsa_head is not None and lsa_embeddings is not None)
+        need_hidden = use_reasoning or use_lsa
+
+        if need_hidden:
+            pred, hidden = self.model(state_action_traj, timesteps, img_c=img_c, lang_c=lang_c,
+                                      lang_attn_mask=lang_attn_mask, return_hidden=True)
+        else:
+            pred = self.model(state_action_traj, timesteps, img_c=img_c, lang_c=lang_c,
+                              lang_attn_mask=lang_attn_mask)
+
         target = action_gt - noise
-        
         diff_loss = F.mse_loss(pred, target)
-        
+
+        # Reasoning auxiliary loss (token prediction)
+        if use_reasoning:
+            state_hidden = hidden[:, 0, :]
+            seq_len = reasoning_token_ids.shape[1]
+            reasoning_logits = reasoning_head(state_hidden, seq_len)
+            reasoning_loss = F.cross_entropy(
+                reasoning_logits.reshape(-1, reasoning_logits.shape[-1]),
+                reasoning_token_ids.reshape(-1).long(),
+                ignore_index=0
+            )
+            total_loss = diff_loss + reasoning_lambda * reasoning_loss
+            return {"diff_loss": diff_loss, "reasoning_loss": reasoning_loss, "loss": total_loss}
+
+        # LSA loss (latent semantic alignment)
+        if use_lsa:
+            action_hidden = hidden[:, 1:, :]  # (B, 16, hidden_size) image-grounded
+            projected = lsa_head(action_hidden)  # (B, t5_dim)
+            if lsa_attn_mask is not None:
+                mask = lsa_attn_mask.unsqueeze(-1).float()
+                reasoning_mean = (lsa_embeddings * mask).sum(1) / mask.sum(1).clamp(min=1)
+            else:
+                reasoning_mean = lsa_embeddings.mean(dim=1)
+            p_norm = F.normalize(projected, dim=-1)
+            r_norm = F.normalize(reasoning_mean.float(), dim=-1)
+            lsa_loss_val = (1 - (p_norm * r_norm).sum(dim=-1)).mean()
+            total_loss = diff_loss + lsa_lambda * lsa_loss_val
+            return {"diff_loss": diff_loss, "lsa_loss": lsa_loss_val, "loss": total_loss}
+
         return {"diff_loss": diff_loss, "loss": diff_loss}
 
     @torch.no_grad()

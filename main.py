@@ -310,6 +310,57 @@ def parse_args(input_args=None):
         help="Task name for RobotwinAgilexDataset (e.g., 'open_laptop', 'close_laptop', etc.)"
     )
 
+    parser.add_argument(
+        "--use_lora",
+        action="store_true",
+        help="Whether to use LoRA for parameter-efficient finetuning during pretrain mode."
+    )
+    parser.add_argument(
+        "--use_reasoning_head",
+        action="store_true",
+        help="Whether to use reasoning auxiliary loss during pretrain mode."
+    )
+    parser.add_argument(
+        "--reasoning_lambda",
+        type=float,
+        default=0.1,
+        help="Weight for reasoning auxiliary loss. Default 0.1."
+    )
+    parser.add_argument(
+        "--use_lsa",
+        action="store_true",
+        help="Whether to use LSA (latent semantic alignment) loss during pretrain mode."
+    )
+    parser.add_argument(
+        "--freeze_backbone",
+        action="store_true",
+        help="Whether to freeze backbone during finetune mode, only training action encoder/decoder."
+    )
+    parser.add_argument(
+        "--max_robot_episodes",
+        type=int,
+        default=50,
+        help="Maximum number of robot episodes to use for finetuning (default: 50)."
+    )
+    parser.add_argument(
+        "--lsa_lambda",
+        type=float,
+        default=0.1,
+        help="Weight for LSA loss. Default 0.1. Safe since LSA loss is bounded [0,1]."
+    )
+    parser.add_argument(
+        "--lora_rank",
+        type=int,
+        default=8,
+        help="LoRA rank. Lower = less parameters, less drift. Recommended: 4-16."
+    )
+    parser.add_argument(
+        "--lora_alpha",
+        type=int,
+        default=16,
+        help="LoRA alpha scaling factor. Recommended: 2x rank."
+    )  
+
     if input_args is not None:
         args = parser.parse_args(input_args)
     else:

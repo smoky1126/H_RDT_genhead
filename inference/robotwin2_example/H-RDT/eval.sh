@@ -1,11 +1,11 @@
 #!/bin/bash
 
 policy_name="H-RDT"
-task_name="handover_mic"
+task_name="adjust_bottle"
 task_config="demo_randomized"
-ckpt_setting=""
+ckpt_setting="checkpoints/robotwin2/pytorch_model.bin"
 seed="42"
-gpu_id="0"
+gpu_id="0,1"
 # [TODO] add parameters here
 
 export CUDA_VISIBLE_DEVICES=${gpu_id}

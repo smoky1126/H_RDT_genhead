@@ -181,3 +181,14 @@ test_*.py
 
 checkpoints/*
 bak/*
+# === Added for H_RDT cleanup ===
+models/t5-v1_1-xxl/
+*.bin
+*.safetensors
+*.bak
+*.bak2
+*.backup
+.cache/
+test.py
+datasets/pretrain/egodex_stat_BACKUP.json
+datasets/pretrain/egodex_large_values.txt
