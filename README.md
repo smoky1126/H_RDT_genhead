@@ -1,4 +1,4 @@
-# Reasoning_VLA: H-RDT with Latent Semantic Scaffolding (LSS)
+# Latent Semantic Scaffolding: Training-Time Reasoning Alignment for Vision-Language-Action Models
 
 This repository extends [H-RDT](https://github.com/HongzheBi/H_RDT) with a training-time alignment mechanism — **Latent Semantic Scaffolding (LSS)** — that aligns image-grounded action token representations with T5 reasoning text embeddings during Stage 2 pretraining.
 
@@ -125,9 +125,9 @@ If you use this code, please cite both the upstream H-RDT paper and this reposit
 
 ```
 @misc{reasoning_vla_2026,
-  title  = {Latent Semantic Scaffolding for Vision-Language-Action Models},
+  title  = {Latent Semantic Scaffolding: Training-Time Reasoning Alignment for Vision-Language-Action Models},
   author = {Andrew},
-  note   = {Work in progress, MPhil project, CUHK},
+  note   = {Work in progress, CUHK},
   year   = {2026}
 }
 ```
