@@ -1,6 +1,6 @@
 # Reasoning_VLA: H-RDT with Latent Semantic Scaffolding (LSS)
 
-This repository extends [H-RDT](https://github.com/embodiedfoundation/H-RDT) with a training-time alignment mechanism — **Latent Semantic Scaffolding (LSS)** — that aligns image-grounded action token representations with T5 reasoning text embeddings during Stage 2 pretraining.
+This repository extends [H-RDT](https://github.com/HongzheBi/H_RDT) with a training-time alignment mechanism — **Latent Semantic Scaffolding (LSS)** — that aligns image-grounded action token representations with T5 reasoning text embeddings during Stage 2 pretraining.
 
 The LSS auxiliary head is discarded at inference, so the deployed policy has zero inference overhead relative to vanilla H-RDT.
 
@@ -138,6 +138,6 @@ For H-RDT, see https://arxiv.org/abs/2507.23523.
 
 ## Acknowledgments
 
-Built on top of [H-RDT](https://github.com/embodiedfoundation/H-RDT) by the Embodied Foundation team. The H-RDT codebase, pretrained weights, and EgoDex data pipeline are the foundation this work extends. All credit for the underlying VLA architecture goes to the H-RDT authors.
+Built on top of [H-RDT](https://github.com/HongzheBi/H_RDT) by the Embodied Foundation team. The H-RDT codebase, pretrained weights, and EgoDex data pipeline are the foundation this work extends. All credit for the underlying VLA architecture goes to the H-RDT authors.
 
 AVP data collection pipeline forked from [RogerQi/human-policy](https://github.com/RogerQi/human-policy).
