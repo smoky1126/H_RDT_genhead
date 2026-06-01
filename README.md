@@ -4,6 +4,7 @@ This repository extends [H-RDT](https://github.com/embodiedfoundation/H-RDT) wit
 
 The LSS auxiliary head is discarded at inference, so the deployed policy has zero inference overhead relative to vanilla H-RDT.
 
+
 ---
 
 ## Headline Results
