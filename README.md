@@ -20,7 +20,7 @@ Single-task evaluation: RoboTwin 2.0, `adjust_bottle`, `demo_randomized`, aloha-
 | C | +AVP | +reasoning | Reasoning as language input (no aux loss) | 71% |
 | D | +AVP | +reasoning | Reasoning via token-prediction loss (cross-entropy) | 74% |
 | **E** | **+AVP** | **+reasoning** | **Reasoning via embedding alignment (LSS, proposed)** | **85%** |
-| Ablation | +AVP | – | LSS aligned to simple instruction (wrong target) | 58% |
+| Ablation | +AVP | – | LSS aligned to simple instruction text | 58% |
 | F | +AVP | +reasoning | Run E Stage 2 + frozen backbone | 0% |
 
 The 58% to 85% gap (ablation to Run E) is the load-bearing evidence that what LSS aligns to matters, not just that an auxiliary loss is present.
