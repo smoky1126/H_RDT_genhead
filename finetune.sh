@@ -1,3 +1,7 @@
+## launch command:
+## cd ~/H_RDT && conda activate hrdt && bash finetune.sh 2>&1 | tee logs_XXX.txt
+
+
 # Remove/disable cluster-specific NCCL settings:
 # export NCCL_IB_HCA=mlx5_0:1,mlx5_1:1,mlx5_2:1,mlx5_3:1,mlx5_4:1,mlx5_7:1,mlx5_8:1,mlx5_9:1
 # export NCCL_IB_DISABLE=0
@@ -17,8 +21,8 @@ export LDFLAGS="-L/usr/lib/x86_64-linux-gnu"
 #export CUTLASS_PATH="/data/lingxuan/cutlass"
 
 export WANDB_PROJECT="hrdt_adjust_bottle_reasoning_mar17"
-export PRETRAINED_CHECKPOINT="./checkpoints/pretrain-0618/checkpoint-500000/pytorch_model.bin"
-export OUTPUT_DIR="./checkpoints/model_a_data_eff_25ep_mar31"
+export PRETRAINED_CHECKPOINT="./checkpoints/pretrain_human_baseline_lora_mar16/pytorch_model.bin"
+export OUTPUT_DIR="./checkpoints/R2_avp-noLSS_put_bottles_dustbin"
 
 
 export VISION_ENCODER_NAME="dino-siglip"
@@ -63,9 +67,9 @@ accelerate launch main.py \
     --precomp_lang_embed \
     --training_mode="lang" \
     --mode="finetune" \
-    --max_robot_episodes=25 \
+    --max_robot_episodes=50 \
     --pretrained_backbone_path="$PRETRAINED_CHECKPOINT" \
-    --task_name="adjust_bottle" \
+    --task_name="put_bottles_dustbin" \
     #--resume_from_checkpoint="checkpoint-3000" \
 
     #--gradient_checkpointing \

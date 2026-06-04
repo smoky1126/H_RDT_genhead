@@ -100,7 +100,7 @@ class VLAConsumerDataset(Dataset):
             '''
             self.hdf5_dataset = RobotwinAgilexDataset(
                 mode="single_task",
-                task_name="adjust_bottle",
+                task_name=task_name,
                 #added this (by andrew),
                 hdf5_folder="aloha-agilex_clean_50/data",
                 max_episodes=config.get("dataset", {}).get("max_robot_episodes", 50),

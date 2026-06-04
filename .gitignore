@@ -192,3 +192,7 @@ models/t5-v1_1-xxl/
 test.py
 datasets/pretrain/egodex_stat_BACKUP.json
 datasets/pretrain/egodex_large_values.txt
+
+# experiment artifacts
+logs_*.txt
+*.bak_*
