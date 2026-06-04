@@ -138,6 +138,6 @@ For H-RDT, see https://arxiv.org/abs/2507.23523.
 
 ## Acknowledgments
 
-Built on top of [H-RDT](https://github.com/HongzheBi/H_RDT) by the Embodied Foundation team. The H-RDT codebase, pretrained weights, and EgoDex data pipeline are the foundation this work extends. All credit for the underlying VLA architecture goes to the H-RDT authors.
+Built on top of [H-RDT](https://github.com/HongzheBi/H_RDT) by the Tsinghua team. The H-RDT codebase, pretrained weights, and EgoDex data pipeline are the foundation this work extends. All credit for the underlying VLA architecture goes to the H-RDT authors.
 
 AVP data collection pipeline forked from [RogerQi/human-policy](https://github.com/RogerQi/human-policy).
