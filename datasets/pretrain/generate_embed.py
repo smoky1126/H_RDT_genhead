@@ -5,6 +5,8 @@ import glob
 import argparse
 from tqdm import tqdm
 from transformers import T5EncoderModel, AutoTokenizer
+import json
+import numpy as np
 
 # --- DEFAULT SETTINGS ---
 # Local path to T5 model
@@ -27,10 +29,84 @@ def get_t5_embedding(text, tokenizer, model, device):
     embedding = output.last_hidden_state.detach().cpu()
     return embedding
 
+
+# ===================== DENSE MODE (per-phase embeddings) =====================
+_DENSE_VALID = ["approach", "grip", "rotate", "withdraw"]
+
+def _rotate_peak_frac(actions, active, search_end_frac=1.0):
+    # search_end_frac: only look for the rotation peak BEFORE this frac
+    # (excludes the withdraw/retract region, whose wrist motion also spins).
+    wrot = actions[:, 3:9] if active == "left" else actions[:, 27:33]
+    T = len(wrot)
+    if T < 3: return None
+    rv = np.zeros(T); rv[1:] = np.linalg.norm(np.diff(wrot, axis=0), axis=1)
+    rv = np.convolve(rv, np.ones(5)/5, mode="same")
+    cutoff = max(2, int(T * search_end_frac))
+    return int(np.argmax(rv[:cutoff])) / T
+
+def _active_hand(a):
+    rng = a.max(0) - a.min(0)
+    return "left" if rng[0:24].sum() >= rng[24:48].sum() else "right"
+
+def _dense_process_ep(ep, phases, hdf5_path, tokenizer, model, device):
+    with h5py.File(hdf5_path, "r") as f:
+        actions = np.array(f["actions_48d"][:])
+    T = len(actions); active = _active_hand(actions)
+    names, frames, embs, masks, rats = [], [], [], [], []
+    for ph in phases:
+        n = ph.get("name")
+        if n not in _DENSE_VALID: continue
+        s = max(0, int(round(ph["start_frac"] * T)))
+        e = min(T, max(s + 1, int(round(ph["end_frac"] * T))))
+        emb = get_t5_embedding(ph["rationale"], tokenizer, model, device).squeeze(0)
+        tk = tokenizer(ph["rationale"], return_tensors="pt", padding=False, truncation=True, max_length=128)
+        names.append(n); frames.append((s, e)); embs.append(emb)
+        masks.append(tk.attention_mask.squeeze(0)); rats.append(ph["rationale"])
+    pooled_emb = get_t5_embedding(" ".join(rats), tokenizer, model, device).squeeze(0) if rats else None
+    flags = {}
+    if len(names) < 2: flags["low_phase_count"] = len(names)
+    if "rotate" in names:
+        # cap the kinematic search at the withdraw phase start (excl. retract spin); fallback 0.85
+        if "withdraw" in names:
+            wi = names.index("withdraw"); search_end = frames[wi][0] / T
+        else:
+            search_end = 0.85
+        rpf = _rotate_peak_frac(actions, active, search_end_frac=search_end)
+        if rpf is not None:
+            ri = names.index("rotate"); rs, re_ = frames[ri]; pk = rpf * T
+            flags["rotate_peak_frac"] = round(rpf, 3); flags["rotate_window"] = [round(rs/T,3), round(re_/T,3)]
+            if not (rs <= pk <= re_): flags["rotate_mismatch"] = True
+    return {"episode": ep, "active_hand": active, "episode_len": T,
+            "phase_names": names, "phase_frames": frames, "phase_embeddings": embs,
+            "phase_attn_masks": masks, "phase_rationales": rats,
+            "pooled_embedding": pooled_emb, "flags": flags}
+
+def run_dense(data_root, out_root, tokenizer, model, device):
+    jsons = glob.glob(os.path.join(data_root, "**", "reasoning_phased.json"), recursive=True)
+    print(f"DENSE: found {len(jsons)} sessions with phased annotations")
+    total = flo = frot = 0; summ = []
+    for jp in jsons:
+        sd = os.path.dirname(jp); sn = os.path.basename(sd)
+        ann = json.load(open(jp)); od = os.path.join(out_root, sn); os.makedirs(od, exist_ok=True)
+        for ep, d in tqdm(ann.items(), desc=sn[:22]):
+            hp = os.path.join(sd, f"{ep}.hdf5")
+            if not os.path.exists(hp): continue
+            try: rec = _dense_process_ep(ep, d.get("phases", []), hp, tokenizer, model, device)
+            except Exception as e: print(f"  FAIL {ep}: {repr(e)[:60]}"); continue
+            torch.save(rec, os.path.join(od, f"{ep}.pt")); total += 1
+            if "low_phase_count" in rec["flags"]: flo += 1
+            if rec["flags"].get("rotate_mismatch"):
+                frot += 1; summ.append(f"{sn}/{ep}: rot win {rec['flags']['rotate_window']} misses peak {rec['flags']['rotate_peak_frac']}")
+    print(f"\nDENSE DONE: {total} .pt -> {out_root} | low_phase(<2): {flo} | rotate_mismatch: {frot}")
+    for x in summ[:20]: print("  ", x)
+# ============================================================================
+
 def main():
     parser = argparse.ArgumentParser(description="Generate .pt embeddings from HDF5 attributes.")
     parser.add_argument("--data_root", type=str, required=True, help="Path to the processed data folder")
     parser.add_argument("--t5_path", type=str, default=DEFAULT_T5_PATH, help="Path to local T5 model")
+    parser.add_argument("--dense", action="store_true", help="Dense mode: per-phase embeddings from reasoning_phased.json")
+    parser.add_argument("--out", type=str, default=None, help="Output dir for dense .pt (dense mode)")
     args = parser.parse_args()
 
     # 1. Load Model
@@ -43,6 +119,11 @@ def main():
         print(f"❌ Failed to load T5 model: {e}")
         return
     model.eval()
+
+    if args.dense:
+        out_root = args.out or os.path.join(os.path.dirname(args.data_root.rstrip("/")), "processed_dense_reasoning")
+        run_dense(args.data_root, out_root, tokenizer, model, device)
+        return
 
     # 2. Find Files
     search_path = os.path.join(args.data_root, "**", "*.hdf5")
