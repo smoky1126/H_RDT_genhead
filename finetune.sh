@@ -20,9 +20,9 @@ export CFLAGS="-I/usr/include"
 export LDFLAGS="-L/usr/lib/x86_64-linux-gnu"
 #export CUTLASS_PATH="/data/lingxuan/cutlass"
 
-export WANDB_PROJECT="hrdt_adjust_bottle_reasoning_mar17"
-export PRETRAINED_CHECKPOINT="./checkpoints/pretrain_human_baseline_lora_mar16/pytorch_model.bin"
-export OUTPUT_DIR="./checkpoints/R2_avp-noLSS_put_bottles_dustbin"
+export WANDB_PROJECT="hrdt_shake_bottle_baseline_june4"
+export PRETRAINED_CHECKPOINT="./checkpoints/pretrain-0618/checkpoint-500000/pytorch_model.bin"
+export OUTPUT_DIR="./checkpoints/R1_hrdt-baseline_shake_bottle"
 
 
 export VISION_ENCODER_NAME="dino-siglip"
@@ -69,7 +69,7 @@ accelerate launch main.py \
     --mode="finetune" \
     --max_robot_episodes=50 \
     --pretrained_backbone_path="$PRETRAINED_CHECKPOINT" \
-    --task_name="put_bottles_dustbin" \
+    --task_name="shake_bottle" \
     #--resume_from_checkpoint="checkpoint-3000" \
 
     #--gradient_checkpointing \
