@@ -40,7 +40,54 @@ Key properties:
 - **No inference overhead.** Contrasts with inference-time conditioning approaches (CoT-VLA, pi0.7).
 - **Stage 2 mechanism.** LSS activates during the second pretraining stage (Apple Vision Pro human demonstrations + reasoning text), not during finetuning.
 
-The alignment target is generated offline by a VLM (see companion repo `human-policy_VLA`) producing structured JSON annotations of the form `{high_level_goal, subgoal, reason, objects}` per trajectory.
+The alignment target is generated offline by a VLM (see companion repo `human-policy_VLA`) producing structured reasoning text per trajectory.
+
+---
+
+## Dense LSS (phase-local alignment)
+
+**Pooled LSS** (Run E above) aligns *every* sampled action-window of an episode to a *single* episode-level reasoning embedding. **Dense LSS** is a finer-grained variant: it aligns each sampled action-window to the embedding of the reasoning rationale for the **specific manipulation phase** that window falls in.
+
+Motivation: test whether the *temporal structure* of reasoning matters, not just its content. A window during "grip" is aligned to grip-reasoning; a window during "rotate" to rotate-reasoning.
+
+### Mechanism
+
+- Each AVP episode is segmented (offline, in `human-policy_VLA`) into up to four causal phases: **approach → grip → rotate → withdraw**, each with its own one-sentence causal rationale (`reasoning_phased.json`).
+- `generate_embed.py --dense` T5-encodes each phase rationale separately and writes a per-episode `*_dense.pt` containing per-phase embeddings + phase frame-ranges.
+- At training time, when a window is sampled at frame `index`, the dataloader picks the phase with **maximum overlap** with that window and returns its embedding as the LSS target.
+- The loss is unchanged — Dense reuses the same cosine alignment, only the *target* differs (phase-local instead of pooled). The pooled path is untouched.
+
+Inference is unaffected: like pooled LSS, the alignment target exists only at training time and is discarded. A simple instruction is used at deploy.
+
+### Building the dense targets
+
+The per-phase embeddings (`*_dense.pt`) are built from the phased annotations in `human-policy_VLA` and written co-located into `processed_baseline/`:
+
+```bash
+python datasets/pretrain/generate_embed.py \
+  --data_root      ~/human-policy/data/recordings/processed_reasoning \
+  --baseline_root  ~/human-policy/data/recordings/processed_baseline \
+  --dense
+```
+
+- Reads `reasoning_phased.json` from `--data_root` (the reasoning-processed folder).
+- Reads `actions_48d` from the matching episode in `--baseline_root` (frac → frame conversion).
+- Writes `processed_episode_N_dense.pt` next to each episode in `--baseline_root`.
+- Includes a kinematic rotate cross-check (diagnostic only; reported as `rotate_mismatch`, does not affect the saved data). The kinematic signal is noisy on fast tasks, so phase boundaries are validated primarily by VLM-vs-human video comparison, not this check.
+
+`*_dense.pt` schema: `phase_names`, `phase_frames` (frame ranges), `phase_embeddings` (per-phase T5), `phase_attn_masks`, `phase_rationales`, `pooled_embedding`, `episode_len`, `flags`.
+
+### Running a Dense LSS pretrain
+
+Same as a pooled pretrain but with `--use_dense_lsa` instead of `--use_lsa`:
+
+```bash
+# in pretrain.sh, swap the flag:
+#   --use_lsa            (pooled)   ->   --use_dense_lsa   (dense)
+bash pretrain.sh
+```
+
+`--use_dense_lsa` and `--use_lsa` are mutually exclusive. Dense requires `*_dense.pt` files present in the data root (built by the command above). If a dense file is missing for an episode, that episode falls back to no dense target.
 
 ---
 
@@ -48,16 +95,41 @@ The alignment target is generated offline by a VLM (see companion repo `human-po
 
 Files that matter for the LSS contribution:
 
-- `models/hrdt_runner.py` — LSAHead class + compute_loss with LSS branch
-- `main.py` — CLI flags: `--use_lsa`, `--lsa_lambda`
-- `train/train.py` — LSAHead instantiation (pretrain mode only)
-- `models/hrdt/model.py` — forward() supports `return_hidden=True` for LSS hook
-- `pretrain.sh` — Stage 2 pretrain script with `--use_lsa`
+- `models/hrdt_runner.py` — LSAHead class + compute_loss with LSS branch (shared by pooled and dense)
+- `main.py` — CLI flags: `--use_lsa`, `--lsa_lambda`, `--use_dense_lsa`
+- `train/train.py` — LSAHead instantiation (pretrain mode; fires for `--use_lsa` or `--use_dense_lsa`); selects pooled vs dense alignment target
+- `datasets/pretrain/egodex_dataset.py` — AVP/EgoDex loader; `_select_dense_phase` picks the sampled window's max-overlap phase; returns `dense_lsa_embeds`
+- `datasets/dataset.py` — collate: gathers + pads per-window phase embeddings into the batch
+- `datasets/pretrain/generate_embed.py` — T5 embedding builder; `--dense` mode for per-phase targets
+- `models/hrdt/model.py` — forward() supports `return_hidden=True` for the LSS hook
+- `pretrain.sh` — Stage 2 pretrain script (`--use_lsa` / `--use_dense_lsa`)
 - `finetune.sh` — Stage 3 task finetune (LSS already baked into priors)
-- `datasets/pretrain/` — EgoDex + AVP human data loading
 - `configs/hrdt_pretrain.yaml`, `configs/hrdt_finetune.yaml`
 
 Other directories (`assets/`, `inference/real_example/`, etc.) are inherited from upstream H-RDT.
+
+---
+
+## Transfer Probe (R1 / R2 / R3)
+
+A transfer probe tests whether LSS-shaped representations generalize to a **task not seen in Stage 2** — i.e. whether the benefit is in the learned representation, not just the training task. Three Stage-3 finetunes are run on a held-out task, identical except for the Stage-2 backbone they start from:
+
+| Arm | Stage-2 backbone | Tests |
+|-----|------------------|-------|
+| **R1** | EgoDex pretrain only (no AVP) | baseline floor |
+| **R2** | + AVP, no LSS | AVP contribution |
+| **R3** | + AVP + reasoning + LSS (Run E backbone) | LSS contribution |
+
+All three: 50 episodes, 22,000 steps, `mode=finetune` (no LSS in Stage 3). The probe task is **`shake_bottle`** (RoboTwin 2.0, aloha-agilex) — chosen over `put_bottles_dustbin` because it is single-bottle (eval-stable), bottle-manipulation (transfer-relevant to the `adjust_bottle` training distribution), and has sufficient headroom (H-RDT paper ≈ 68%).
+
+Setup per arm (edit `finetune.sh`):
+- `--pretrained_backbone_path` → the arm's Stage-2 backbone checkpoint
+- `OUTPUT_DIR` → `R{1,2,3}_..._shake_bottle`
+- `--task_name="shake_bottle"`, `--max_robot_episodes=50`, `--max_train_steps=22000`
+
+Eval each arm via the companion `Reasoning_VLA_robotwin` repo (`bash eval.sh`, task `shake_bottle`). Comparing R3 vs R2 isolates whether LSS transfers; this verdict gates whether further LSS variants (e.g. Dense) are worth a full pretrain.
+
+> Eval note: the RoboTwin success rate is `policy_successes / valid_rollouts`; seeds where the simulator's own expert-demo setup crashes are skipped (not counted as failures). Single-bottle tasks like `shake_bottle` rarely trigger such crashes.
 
 ---
 
@@ -67,7 +139,7 @@ This work spans three repos:
 
 | Repo | Purpose | Edit location on dev machine |
 |------|---------|------------------------------|
-| Reasoning_VLA (this repo) | Training code: Stage 2 LSS pretrain + finetune | `~/H_RDT/` |
+| Reasoning_VLA (this repo) | Training code: Stage 2 LSS pretrain (pooled & dense) + finetune | `~/H_RDT/` |
 | Reasoning_VLA_robotwin | RoboTwin inference glue: `deploy_policy.py`, eval scripts | `~/RoboTwin/policy/H_RDT/inference/robotwin2_example/H_RDT/` |
 | human-policy_VLA | AVP data collection + reasoning text annotation pipeline | `~/human-policy/` |
 
@@ -89,7 +161,8 @@ Run `bash pretrain.sh` from the repo root.
 
 Key flags inside `pretrain.sh`:
 
-- `--use_lsa` enables the LSS loss
+- `--use_lsa` enables pooled LSS loss
+- `--use_dense_lsa` enables dense (phase-local) LSS loss (mutually exclusive with `--use_lsa`; requires `*_dense.pt`)
 - `--lsa_lambda 0.1` weight on the alignment loss (default 0.1)
 - `--use_lora` LoRA for parameter-efficient pretraining
 - `--mode pretrain` LSS is only active in pretrain mode
@@ -114,30 +187,6 @@ Checkpoints in `checkpoints/` follow this convention:
 - `model_<letter>_<config>_<date>/` — Stage 3 finetune from the corresponding pretrain
 - `model_e_*` is the proposed method (LSS + reasoning + AVP)
 - `model_e_ablation_*` is the trivial-target ablation
+- `R{1,2,3}_..._<task>/` — transfer-probe Stage-3 finetunes (see Transfer Probe section)
 
 Checkpoints are not pushed to GitHub (they live on the training server). Contact me for access.
-
----
-
-## Citation
-
-If you use this code, please cite both the upstream H-RDT paper and this repository:
-
-```
-@misc{reasoning_vla_2026,
-  title  = {Latent Semantic Scaffolding: Training-Time Reasoning Alignment for Vision-Language-Action Models},
-  author = {Andrew},
-  note   = {Work in progress, CUHK},
-  year   = {2026}
-}
-```
-
-For H-RDT, see https://arxiv.org/abs/2507.23523.
-
----
-
-## Acknowledgments
-
-Built on top of [H-RDT](https://github.com/HongzheBi/H_RDT) by the Tsinghua team. The H-RDT codebase, pretrained weights, and EgoDex data pipeline are the foundation this work extends. All credit for the underlying VLA architecture goes to the H-RDT authors.
-
-AVP data collection pipeline forked from [RogerQi/human-policy](https://github.com/RogerQi/human-policy).
