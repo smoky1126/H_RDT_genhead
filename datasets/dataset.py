@@ -384,6 +384,8 @@ class DataCollatorForVLAConsumerDataset(object):
                 lang_embeds.shape[0], lang_embeds.shape[1], dtype=torch.bool)
             for i, l in enumerate(lang_embed_lens):
                 input_lang_attn_mask[i, :l] = True
+            batch["lang_embeds"] = lang_embeds
+            batch["lang_attn_mask"] = input_lang_attn_mask
         if has_dense_lsa and len(dense_lsa_list) == len(instances):
             dense_lsa = torch.nn.utils.rnn.pad_sequence(dense_lsa_list, batch_first=True, padding_value=0)
             dense_lsa_mask = torch.zeros(dense_lsa.shape[0], dense_lsa.shape[1], dtype=torch.bool)
@@ -391,8 +393,6 @@ class DataCollatorForVLAConsumerDataset(object):
                 dense_lsa_mask[i, :l] = True
             batch["dense_lsa_embeds"] = dense_lsa
             batch["dense_lsa_mask"] = dense_lsa_mask
-            batch["lang_embeds"] = lang_embeds
-            batch["lang_attn_mask"] = input_lang_attn_mask
         if has_reasoning_tokens and len(reasoning_token_ids_list) == len(instances):
             batch["reasoning_token_ids"] = torch.nn.utils.rnn.pad_sequence(
                 reasoning_token_ids_list,
