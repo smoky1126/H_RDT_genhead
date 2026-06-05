@@ -332,6 +332,11 @@ def parse_args(input_args=None):
         help="Whether to use LSA (latent semantic alignment) loss during pretrain mode."
     )
     parser.add_argument(
+        "--use_dense_lsa",
+        action="store_true",
+        help="Dense LSA: align action tokens to the sampled window's phase embedding (pretrain)."
+    )
+    parser.add_argument(
         "--freeze_backbone",
         action="store_true",
         help="Whether to freeze backbone during finetune mode, only training action encoder/decoder."

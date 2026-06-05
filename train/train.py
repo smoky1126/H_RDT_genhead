@@ -236,7 +236,7 @@ def train(args, logger):
 
     # Initialize LSAHead if requested (pretrain mode only, training-only scaffold)
     lsa_head = None
-    if hasattr(args, 'use_lsa') and args.use_lsa and args.mode == 'pretrain':
+    if hasattr(args, 'use_lsa') and (args.use_lsa or (hasattr(args, 'use_dense_lsa') and args.use_dense_lsa)) and args.mode == 'pretrain':
         from models.hrdt_runner import LSAHead
         lsa_head = LSAHead(hidden_size=2176, t5_dim=4096)
         lsa_head = lsa_head.to(accelerator.device, dtype=weight_dtype)
@@ -523,8 +523,12 @@ def train(args, logger):
                     reasoning_head=reasoning_head,
                     reasoning_lambda=args.reasoning_lambda if hasattr(args, 'reasoning_lambda') else 0.1,
                     lsa_head=lsa_head,
-                    lsa_embeddings=lang_embeds,
-                    lsa_attn_mask=batch["lang_attn_mask"].to(accelerator.device) if "lang_attn_mask" in batch else None,
+                    lsa_embeddings=(batch["dense_lsa_embeds"].to(accelerator.device, dtype=weight_dtype)
+                                    if (hasattr(args, 'use_dense_lsa') and args.use_dense_lsa and "dense_lsa_embeds" in batch)
+                                    else lang_embeds),
+                    lsa_attn_mask=(batch["dense_lsa_mask"].to(accelerator.device)
+                                   if (hasattr(args, 'use_dense_lsa') and args.use_dense_lsa and "dense_lsa_mask" in batch)
+                                   else (batch["lang_attn_mask"].to(accelerator.device) if "lang_attn_mask" in batch else None)),
                     lsa_lambda=args.lsa_lambda if hasattr(args, 'lsa_lambda') else 0.1,
                 )
                 

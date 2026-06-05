@@ -81,23 +81,30 @@ def _dense_process_ep(ep, phases, hdf5_path, tokenizer, model, device):
             "phase_attn_masks": masks, "phase_rationales": rats,
             "pooled_embedding": pooled_emb, "flags": flags}
 
-def run_dense(data_root, out_root, tokenizer, model, device):
+def run_dense(data_root, baseline_root, tokenizer, model, device):
+    # read phased JSON from data_root (processed_reasoning); read actions + write
+    # {ep}_dense.pt co-located in baseline_root (processed_baseline) by matching session/ep.
     jsons = glob.glob(os.path.join(data_root, "**", "reasoning_phased.json"), recursive=True)
     print(f"DENSE: found {len(jsons)} sessions with phased annotations")
-    total = flo = frot = 0; summ = []
+    total = flo = frot = miss = 0; summ = []
     for jp in jsons:
         sd = os.path.dirname(jp); sn = os.path.basename(sd)
-        ann = json.load(open(jp)); od = os.path.join(out_root, sn); os.makedirs(od, exist_ok=True)
+        # mirror the session path under baseline_root (handles part1/ and test/ subdirs)
+        rel = os.path.relpath(sd, data_root)
+        base_sd = os.path.join(baseline_root, rel)
+        ann = json.load(open(jp))
         for ep, d in tqdm(ann.items(), desc=sn[:22]):
-            hp = os.path.join(sd, f"{ep}.hdf5")
-            if not os.path.exists(hp): continue
+            hp = os.path.join(base_sd, f"{ep}.hdf5")  # actions from BASELINE
+            if not os.path.exists(hp): miss += 1; continue
             try: rec = _dense_process_ep(ep, d.get("phases", []), hp, tokenizer, model, device)
             except Exception as e: print(f"  FAIL {ep}: {repr(e)[:60]}"); continue
-            torch.save(rec, os.path.join(od, f"{ep}.pt")); total += 1
+            torch.save(rec, os.path.join(base_sd, f"{ep}_dense.pt")); total += 1  # co-located
             if "low_phase_count" in rec["flags"]: flo += 1
             if rec["flags"].get("rotate_mismatch"):
                 frot += 1; summ.append(f"{sn}/{ep}: rot win {rec['flags']['rotate_window']} misses peak {rec['flags']['rotate_peak_frac']}")
-    print(f"\nDENSE DONE: {total} .pt -> {out_root} | low_phase(<2): {flo} | rotate_mismatch: {frot}")
+    print(f"\nDENSE DONE: {total} _dense.pt written into {baseline_root}")
+    print(f"  low_phase(<2): {flo} | rotate_mismatch: {frot} | hdf5_missing_in_baseline: {miss}")
+    for x in summ[:15]: print("  ", x)
     for x in summ[:20]: print("  ", x)
 # ============================================================================
 
@@ -106,6 +113,7 @@ def main():
     parser.add_argument("--data_root", type=str, required=True, help="Path to the processed data folder")
     parser.add_argument("--t5_path", type=str, default=DEFAULT_T5_PATH, help="Path to local T5 model")
     parser.add_argument("--dense", action="store_true", help="Dense mode: per-phase embeddings from reasoning_phased.json")
+    parser.add_argument("--baseline_root", type=str, default=None, help="processed_baseline root: where actions live + dense .pt written")
     parser.add_argument("--out", type=str, default=None, help="Output dir for dense .pt (dense mode)")
     args = parser.parse_args()
 
@@ -121,8 +129,8 @@ def main():
     model.eval()
 
     if args.dense:
-        out_root = args.out or os.path.join(os.path.dirname(args.data_root.rstrip("/")), "processed_dense_reasoning")
-        run_dense(args.data_root, out_root, tokenizer, model, device)
+        assert args.baseline_root, "--baseline_root required (processed_baseline path)"
+        run_dense(args.data_root, args.baseline_root, tokenizer, model, device)
         return
 
     # 2. Find Files

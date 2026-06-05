@@ -104,6 +104,7 @@ class EgoDexDataset:
                     file_index = hdf5_file.stem  # Get filename without extension
                     mp4_file = task_dir / f"{file_index}.mp4"
                     pt_file = task_dir / f"{file_index}.pt"
+                    dense_pt_file = task_dir / f"{file_index}_dense.pt"
                     
                     # Ensure all required files exist
                     if (hdf5_file.exists() and mp4_file.exists() and 
@@ -112,6 +113,7 @@ class EgoDexDataset:
                             'hdf5': hdf5_file,
                             'mp4': mp4_file,
                             'pt': pt_file,
+                            'dense_pt': dense_pt_file if dense_pt_file.exists() else None,
 
                             'task': task_dir.name,
                             'file_index': file_index
@@ -197,6 +199,18 @@ class EgoDexDataset:
     def __len__(self):
         return len(self.data_files)
     
+    def _select_dense_phase(self, dense_pt_path, index, total_frames):
+        """Pick the phase whose frame-range maximally overlaps the sampled window."""
+        d = torch.load(dense_pt_path, map_location="cpu", weights_only=False)
+        win_s = index
+        win_e = index + self.chunk_size * self.upsample_rate
+        best_i, best_ov = 0, -1
+        for i, (ps, pe) in enumerate(d["phase_frames"]):
+            ov = max(0, min(win_e, pe) - max(win_s, ps))
+            if ov > best_ov:
+                best_ov, best_i = ov, i
+        return d["phase_embeddings"][best_i], d["phase_attn_masks"][best_i]
+
     def get_item(self, idx=None):
         """
         Get a data sample
@@ -260,6 +274,14 @@ class EgoDexDataset:
             
             # Load language embedding
             lang_embed_path = file_info['pt']
+
+            dense_lsa = None
+            if file_info.get('dense_pt') is not None:
+                try:
+                    dense_lsa = self._select_dense_phase(file_info['dense_pt'], index, total_frames)
+                except Exception as e:
+                    print(f"dense phase select failed: {e}")
+                    dense_lsa = None
             
             return {
                 'states': current_action,  # (1, 48)
@@ -268,6 +290,7 @@ class EgoDexDataset:
                 'current_images': [image_frames],  # [(img_history_size, H, W, 3)] single view
                 'current_images_mask': [np.ones(self.img_history_size, dtype=bool)],  # Image mask
                 'instruction': str(lang_embed_path),  # Language embedding file path
+                'dense_lsa_embeds': dense_lsa,  # (phase_emb, phase_mask) or None
                 'dataset_name': self.DATASET_NAME,
                 'task': file_info['task'],
                 'file_info': {

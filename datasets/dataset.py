@@ -279,6 +279,8 @@ class VLAConsumerDataset(Dataset):
         }
         data_dict["images"] = merged_pixel_values
 
+        if res.get("dense_lsa_embeds") is not None:
+            data_dict["dense_lsa_embeds"] = res["dense_lsa_embeds"]
         if self.use_precomp_lang_embed:
             # All datasets should provide lang_embeds as tensor
             if "lang_embeds" in res:
@@ -323,6 +325,7 @@ class DataCollatorForVLAConsumerDataset(object):
         if self.use_precomp_lang_embed:
             lang_embeds = []
             lang_embed_lens = []
+            dense_lsa_list = []; dense_lsa_lens = []; has_dense_lsa = False
         reasoning_token_ids_list = []
         has_reasoning_tokens = False
 
@@ -347,6 +350,9 @@ class DataCollatorForVLAConsumerDataset(object):
             if self.use_precomp_lang_embed and "lang_embeds" in instance:
                 lang_embeds.append(instance["lang_embeds"])
                 lang_embed_lens.append(instance["lang_embeds"].shape[0])
+            if instance.get("dense_lsa_embeds") is not None:
+                de, dm = instance["dense_lsa_embeds"]
+                dense_lsa_list.append(de); dense_lsa_lens.append(de.shape[0]); has_dense_lsa = True
             if "reasoning_token_ids" in instance:
                 reasoning_token_ids_list.append(instance["reasoning_token_ids"])
                 has_reasoning_tokens = True
@@ -378,6 +384,13 @@ class DataCollatorForVLAConsumerDataset(object):
                 lang_embeds.shape[0], lang_embeds.shape[1], dtype=torch.bool)
             for i, l in enumerate(lang_embed_lens):
                 input_lang_attn_mask[i, :l] = True
+        if has_dense_lsa and len(dense_lsa_list) == len(instances):
+            dense_lsa = torch.nn.utils.rnn.pad_sequence(dense_lsa_list, batch_first=True, padding_value=0)
+            dense_lsa_mask = torch.zeros(dense_lsa.shape[0], dense_lsa.shape[1], dtype=torch.bool)
+            for i, l in enumerate(dense_lsa_lens):
+                dense_lsa_mask[i, :l] = True
+            batch["dense_lsa_embeds"] = dense_lsa
+            batch["dense_lsa_mask"] = dense_lsa_mask
             batch["lang_embeds"] = lang_embeds
             batch["lang_attn_mask"] = input_lang_attn_mask
         if has_reasoning_tokens and len(reasoning_token_ids_list) == len(instances):
