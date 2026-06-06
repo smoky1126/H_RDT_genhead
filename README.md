@@ -139,7 +139,7 @@ Eval each arm via the companion `Reasoning_VLA_robotwin` repo (`bash eval.sh`, t
 |-----|------------------|---------|
 | R1 | EgoDex only (baseline) | 34% |
 | R2 | + AVP, no LSS | 45% |
-| R3 | + AVP + reasoning + LSS | _pending_ |
+| R3 | + AVP + reasoning + LSS | 39% |
 
 > R1 anchor: H-RDT paper reports ≈68% on `shake_bottle` with full training; R1 here is a 50-episode / 22k-step finetune of the EgoDex-only backbone, so a lower floor is expected. The probe reads R3 vs R2 (does LSS transfer) against this floor.
 
