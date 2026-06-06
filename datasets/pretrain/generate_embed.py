@@ -62,6 +62,15 @@ def _dense_process_ep(ep, phases, hdf5_path, tokenizer, model, device):
         tk = tokenizer(ph["rationale"], return_tensors="pt", padding=False, truncation=True, max_length=128)
         names.append(n); frames.append((s, e)); embs.append(emb)
         masks.append(tk.attention_mask.squeeze(0)); rats.append(ph["rationale"])
+    # Per-phase pooled vectors for Option-D per-token alignment:
+    # masked-mean each phase's (seq, 4096) T5 sequence -> (4096,) per phase.
+    phase_pooled = []
+    for emb, m in zip(embs, masks):
+        mm = m.unsqueeze(-1).float()                      # (seq,1)
+        pooled = (emb * mm).sum(0) / mm.sum().clamp(min=1)  # (4096,)
+        phase_pooled.append(pooled)
+    phase_pooled = torch.stack(phase_pooled, dim=0) if phase_pooled else None  # (n_phases, 4096)
+
     pooled_emb = get_t5_embedding(" ".join(rats), tokenizer, model, device).squeeze(0) if rats else None
     flags = {}
     if len(names) < 2: flags["low_phase_count"] = len(names)
@@ -79,7 +88,7 @@ def _dense_process_ep(ep, phases, hdf5_path, tokenizer, model, device):
     return {"episode": ep, "active_hand": active, "episode_len": T,
             "phase_names": names, "phase_frames": frames, "phase_embeddings": embs,
             "phase_attn_masks": masks, "phase_rationales": rats,
-            "pooled_embedding": pooled_emb, "flags": flags}
+            "pooled_embedding": pooled_emb, "phase_pooled": phase_pooled, "flags": flags}
 
 def run_dense(data_root, baseline_root, tokenizer, model, device):
     # read phased JSON from data_root (processed_reasoning); read actions + write

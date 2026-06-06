@@ -199,17 +199,39 @@ class EgoDexDataset:
     def __len__(self):
         return len(self.data_files)
     
-    def _select_dense_phase(self, dense_pt_path, index, total_frames):
-        """Pick the phase whose frame-range maximally overlaps the sampled window."""
+    def _build_token_phase_targets(self, dense_pt_path, index, total_frames):
+        """Option-D per-token targets: for each of the chunk_size action tokens,
+        assign the pooled embedding of the phase its frame-triple sits in.
+        token t covers frames [index + t*UP, index + t*UP + UP).
+        token_mask[t] = True iff all UP frames of token t are in ONE phase (clean);
+        boundary tokens (straddle two phases) are masked out."""
         d = torch.load(dense_pt_path, map_location="cpu", weights_only=False)
-        win_s = index
-        win_e = index + self.chunk_size * self.upsample_rate
-        best_i, best_ov = 0, -1
-        for i, (ps, pe) in enumerate(d["phase_frames"]):
-            ov = max(0, min(win_e, pe) - max(win_s, ps))
-            if ov > best_ov:
-                best_ov, best_i = ov, i
-        return d["phase_embeddings"][best_i], d["phase_attn_masks"][best_i]
+        phase_frames = d["phase_frames"]            # list of (s,e)
+        phase_pooled = d["phase_pooled"]            # (n_phases, 4096) or None
+        UP = self.upsample_rate
+        K = self.chunk_size
+        if phase_pooled is None or len(phase_frames) == 0:
+            return None
+        t5_dim = phase_pooled.shape[1]
+
+        def phase_of(fr):
+            fr = min(fr, total_frames - 1)
+            for i, (ps, pe) in enumerate(phase_frames):
+                if ps <= fr < pe:
+                    return i
+            return len(phase_frames) - 1  # clamp to last phase
+
+        targets = torch.zeros(K, t5_dim, dtype=phase_pooled.dtype)
+        mask = torch.zeros(K, dtype=torch.bool)
+        for t in range(K):
+            f0 = index + t * UP
+            phs = set(phase_of(f0 + j) for j in range(UP))  # phases this token touches
+            # dominant phase = phase of the token's first frame (or majority)
+            dom = phase_of(f0)
+            targets[t] = phase_pooled[dom]
+            if len(phs) == 1:        # all UP frames in one phase -> clean token
+                mask[t] = True
+        return targets, mask
 
     def get_item(self, idx=None):
         """
@@ -278,9 +300,9 @@ class EgoDexDataset:
             dense_lsa = None
             if file_info.get('dense_pt') is not None:
                 try:
-                    dense_lsa = self._select_dense_phase(file_info['dense_pt'], index, total_frames)
+                    dense_lsa = self._build_token_phase_targets(file_info['dense_pt'], index, total_frames)
                 except Exception as e:
-                    print(f"dense phase select failed: {e}")
+                    print(f"dense token-target build failed: {e}")
                     dense_lsa = None
             
             return {

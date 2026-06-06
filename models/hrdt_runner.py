@@ -47,8 +47,10 @@ class LSAHead(nn.Module):
             nn.Linear(hidden_size, t5_dim)
         )
 
-    def forward(self, action_hidden):
+    def forward(self, action_hidden, per_token=False):
         # action_hidden: (B, 16, hidden_size) — action tokens after img cross-attn
+        if per_token:
+            return self.proj(action_hidden)  # (B, 16, t5_dim) — project each token
         pooled = action_hidden.mean(dim=1)  # (B, hidden_size)
         return self.proj(pooled)            # (B, t5_dim)
 
@@ -313,7 +315,8 @@ class HRDTRunner(
         if hasattr(self.model, "gradient_checkpointing_enable"):
             self.model.gradient_checkpointing_enable(value)
 
-    def compute_loss(self, state_tokens=None, action_gt=None, image_tokens=None, lang_tokens=None, lang_attn_mask=None, reasoning_token_ids=None, reasoning_head=None, reasoning_lambda=0.1, lsa_head=None, lsa_embeddings=None, lsa_attn_mask=None, lsa_lambda=0.1):
+    def compute_loss(self, state_tokens=None, action_gt=None, image_tokens=None, lang_tokens=None, lang_attn_mask=None, reasoning_token_ids=None, reasoning_head=None, reasoning_lambda=0.1, lsa_head=None, lsa_embeddings=None, lsa_attn_mask=None, lsa_lambda=0.1,
+                     dense_lsa_targets=None, dense_lsa_mask=None, use_dense_lsa=False):
         """
             img_tokens: (batch_size, img_len, img_token_dim)
             state_tokens: (batch_size, chunk_size, action_dim), 
@@ -344,8 +347,9 @@ class HRDTRunner(
         state_action_traj = torch.cat([state_traj, action_traj], dim=1)
 
         use_reasoning = (reasoning_token_ids is not None and reasoning_head is not None)
-        use_lsa = (lsa_head is not None and lsa_embeddings is not None)
-        need_hidden = use_reasoning or use_lsa
+        use_lsa = (lsa_head is not None and lsa_embeddings is not None and not use_dense_lsa)
+        use_dense = (use_dense_lsa and lsa_head is not None and dense_lsa_targets is not None)
+        need_hidden = use_reasoning or use_lsa or use_dense
 
         if need_hidden:
             pred, hidden = self.model(state_action_traj, timesteps, img_c=img_c, lang_c=lang_c,
@@ -369,6 +373,22 @@ class HRDTRunner(
             )
             total_loss = diff_loss + reasoning_lambda * reasoning_loss
             return {"diff_loss": diff_loss, "reasoning_loss": reasoning_loss, "loss": total_loss}
+
+        # Dense LSA loss (Option D: per-token phase alignment)
+        if use_dense:
+            action_hidden = hidden[:, 1:, :]                  # (B, K, hidden_size)
+            projected = lsa_head(action_hidden, per_token=True)  # (B, K, t5_dim)
+            p_norm = F.normalize(projected, dim=-1)
+            r_norm = F.normalize(dense_lsa_targets.float(), dim=-1)  # (B, K, t5_dim)
+            cos = (p_norm * r_norm).sum(dim=-1)               # (B, K) per-token similarity
+            loss_tok = (1 - cos)                              # (B, K)
+            if dense_lsa_mask is not None:
+                m = dense_lsa_mask.float()                    # (B, K) clean-token mask
+                lsa_loss_val = (loss_tok * m).sum() / m.sum().clamp(min=1)
+            else:
+                lsa_loss_val = loss_tok.mean()
+            total_loss = diff_loss + lsa_lambda * lsa_loss_val
+            return {"diff_loss": diff_loss, "lsa_loss": lsa_loss_val, "loss": total_loss}
 
         # LSA loss (latent semantic alignment)
         if use_lsa:

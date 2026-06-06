@@ -523,13 +523,16 @@ def train(args, logger):
                     reasoning_head=reasoning_head,
                     reasoning_lambda=args.reasoning_lambda if hasattr(args, 'reasoning_lambda') else 0.1,
                     lsa_head=lsa_head,
-                    lsa_embeddings=(batch["dense_lsa_embeds"].to(accelerator.device, dtype=weight_dtype)
-                                    if (hasattr(args, 'use_dense_lsa') and args.use_dense_lsa and "dense_lsa_embeds" in batch)
-                                    else lang_embeds),
-                    lsa_attn_mask=(batch["dense_lsa_mask"].to(accelerator.device)
-                                   if (hasattr(args, 'use_dense_lsa') and args.use_dense_lsa and "dense_lsa_mask" in batch)
-                                   else (batch["lang_attn_mask"].to(accelerator.device) if "lang_attn_mask" in batch else None)),
+                    lsa_embeddings=lang_embeds,
+                    lsa_attn_mask=(batch["lang_attn_mask"].to(accelerator.device) if "lang_attn_mask" in batch else None),
                     lsa_lambda=args.lsa_lambda if hasattr(args, 'lsa_lambda') else 0.1,
+                    use_dense_lsa=(hasattr(args, 'use_dense_lsa') and args.use_dense_lsa),
+                    dense_lsa_targets=(batch["dense_lsa_embeds"].to(accelerator.device, dtype=weight_dtype)
+                                       if (hasattr(args, 'use_dense_lsa') and args.use_dense_lsa and "dense_lsa_embeds" in batch)
+                                       else None),
+                    dense_lsa_mask=(batch["dense_lsa_mask"].to(accelerator.device)
+                                    if (hasattr(args, 'use_dense_lsa') and args.use_dense_lsa and "dense_lsa_mask" in batch)
+                                    else None),
                 )
                 
                 loss = loss_dict["loss"]
