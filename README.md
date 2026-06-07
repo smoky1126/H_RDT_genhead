@@ -22,6 +22,7 @@ Single-task evaluation: RoboTwin 2.0, `adjust_bottle`, `demo_randomized`, aloha-
 | **E** | **+AVP** | **+reasoning** | **Reasoning via embedding alignment (LSS, proposed)** | **85%** |
 | Ablation | +AVP | – | LSS aligned to simple instruction text | 58% |
 | F | +AVP | +reasoning | Run E Stage 2 + frozen backbone | 0% |
+| G | +AVP | +reasoning | **Dense LSS (proposed)** | 90% |
 
 The 58% to 85% gap (ablation to Run E) is the load-bearing evidence that what LSS aligns to matters, not just that an auxiliary loss is present.
 
@@ -114,7 +115,7 @@ Other directories (`assets/`, `inference/real_example/`, etc.) are inherited fro
 
 A transfer probe tests whether LSS-shaped representations generalize to a **task not seen in Stage 2** — i.e. whether the benefit is in the learned representation, not just the training task. Three Stage-3 finetunes are run on a held-out task, identical except for the Stage-2 backbone they start from:
 
-| Arm | Stage-2 backbone | Tests |
+| Rum | Stage-2 backbone | Tests |
 |-----|------------------|-------|
 | **R1** | EgoDex pretrain only (no AVP) | H-RDT baseline |
 | **R2** | + AVP, no LSS | AVP contribution |
@@ -135,7 +136,7 @@ Eval each arm via the companion `Reasoning_VLA_robotwin` repo (`bash eval.sh`, t
 
 `shake_bottle`, `demo_randomized`, aloha-agilex, 100 valid rollouts, seed 42.
 
-| Arm | Stage-2 backbone | Success |
+| Run | Stage-2 backbone | Success |
 |-----|------------------|---------|
 | R1 | EgoDex only (H-RDT baseline) | 34% |
 | R2 | + AVP, no LSS | 45% |
