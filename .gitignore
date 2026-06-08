@@ -196,3 +196,5 @@ datasets/pretrain/egodex_large_values.txt
 # experiment artifacts
 logs_*.txt
 *.bak_*
+analysis/mechanism_probing/diff_cache.npz
+*.npz
