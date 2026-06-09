@@ -55,7 +55,7 @@ Motivation: test whether the *temporal structure* of reasoning matters, not just
 
 - Each AVP episode is segmented (offline, in `human-policy_VLA`) into up to four causal phases: **approach → grip → rotate → withdraw**, each with its own one-sentence causal rationale (`reasoning_phased.json`).
 - `generate_embed.py --dense` T5-encodes each phase rationale separately and writes a per-episode `*_dense.pt` containing per-phase embeddings + phase frame-ranges.
-- At training time, when a window is sampled at frame `index`, the dataloader picks the phase with **maximum overlap** with that window and returns its embedding as the LSS target.
+- At training time, each of the K=16 action tokens (each spanning `upsample_rate`=3 frames) is assigned to the phase its frames fall in (`_build_token_phase_targets`), and aligned to that phase's pooled T5 embedding. Tokens whose 3 frames straddle two phases are masked out of the loss (~5% of tokens).
 - The loss is unchanged — Dense reuses the same cosine alignment, only the *target* differs (phase-local instead of pooled). The pooled path is untouched.
 
 Inference is unaffected: like pooled LSS, the alignment target exists only at training time and is discarded. A simple instruction is used at deploy.
@@ -99,7 +99,7 @@ Files that matter for the LSS contribution:
 - `models/hrdt_runner.py` — LSAHead class + compute_loss with LSS branch (shared by pooled and dense)
 - `main.py` — CLI flags: `--use_lsa`, `--lsa_lambda`, `--use_dense_lsa`
 - `train/train.py` — LSAHead instantiation (pretrain mode; fires for `--use_lsa` or `--use_dense_lsa`); selects pooled vs dense alignment target
-- `datasets/pretrain/egodex_dataset.py` — AVP/EgoDex loader; `_select_dense_phase` picks the sampled window's max-overlap phase; returns `dense_lsa_embeds`
+- `datasets/pretrain/egodex_dataset.py` — AVP/EgoDex loader; `_build_token_phase_targets` assigns each action token to its phase (per-token), returns `dense_lsa_embeds` (targets + clean-token mask)
 - `datasets/dataset.py` — collate: gathers + pads per-window phase embeddings into the batch
 - `datasets/pretrain/generate_embed.py` — T5 embedding builder; `--dense` mode for per-phase targets
 - `models/hrdt/model.py` — forward() supports `return_hidden=True` for the LSS hook
@@ -111,11 +111,11 @@ Other directories (`assets/`, `inference/real_example/`, etc.) are inherited fro
 
 ---
 
-## Transfer Probe (R1 / R2 / R3)
+## Transfer Probe
 
 A transfer probe tests whether LSS-shaped representations generalize to a **task not seen in Stage 2** — i.e. whether the benefit is in the learned representation, not just the training task. Three Stage-3 finetunes are run on a held-out task, identical except for the Stage-2 backbone they start from:
 
-| Rum | Stage-2 backbone | Tests |
+| Run | Stage-2 backbone | Tests |
 |-----|------------------|-------|
 | **R1** | EgoDex pretrain only (no AVP) | H-RDT baseline |
 | **R2** | + AVP, no LSS | AVP contribution |
@@ -125,10 +125,10 @@ All three: 50 episodes, 22,000 steps, `mode=finetune` (no LSS in Stage 3). The p
 
 Setup per arm (edit `finetune.sh`):
 - `--pretrained_backbone_path` → the arm's Stage-2 backbone checkpoint
-- `OUTPUT_DIR` → `R{1,2,3}_..._shake_bottle`
+- `OUTPUT_DIR` → `R{1,2,3,4}_..._shake_bottle`
 - `--task_name="shake_bottle"`, `--max_robot_episodes=50`, `--max_train_steps=22000`
 
-Eval each arm via the companion `Reasoning_VLA_robotwin` repo (`bash eval.sh`, task `shake_bottle`). Comparing R3 vs R2 isolates whether LSS transfers; this verdict gates whether further LSS variants (e.g. Dense) are worth a full pretrain.
+Eval each arm via the companion `Reasoning_VLA_robotwin` repo (`bash eval.sh`, task `shake_bottle`). Comparing R2/R3/R4 isolates whether each LSS variant transfers: pooled LSS (R3) does not transfer (and slightly underperforms the no-LSS R2 baseline), while dense LSS (R4) transfers positively.
 
 > Eval note: the RoboTwin success rate is `policy_successes / valid_rollouts`; seeds where the simulator's own expert-demo setup crashes are skipped (not counted as failures). Single-bottle tasks like `shake_bottle` rarely trigger such crashes.
 
@@ -146,6 +146,19 @@ Eval each arm via the companion `Reasoning_VLA_robotwin` repo (`bash eval.sh`, t
 > R1 anchor: H-RDT paper reports ≈68% on `shake_bottle` with full training; R1 here is a 50-episode / 22k-step finetune of the EgoDex-only backbone, so a lower floor is expected. The probe reads R3 vs R2 (does LSS transfer) against this floor.
 
 ---
+
+## Second Transfer Task (move_can_pot) — in progress
+
+To test whether the dense-vs-pooled transfer finding generalizes beyond a single bottle-similar task, the four-arm probe is being replicated on **`move_can_pot`** (RoboTwin 2.0, aloha-agilex) — a task with different objects and a place sub-goal, more dissimilar to the `adjust_bottle` training distribution than `shake_bottle`. Same protocol (50 episodes, 22,000 steps, `mode=finetune`). Arms **T2-R1 … T2-R4** mirror R1 … R4. Results pending.
+
+---
+
+## Mechanism Probing
+
+A supporting representational analysis (`analysis/mechanism_probing/`) tests *why* dense transfers: it measures whether dense LSS reshapes the backbone's action-token representation **by phase** more than pooled. Using silhouette score on the LSS-induced representational change, dense yields ~2x higher phase separability than pooled (0.047 vs 0.021 vs the AVP-only baseline; 0.037 vs 0.016 vs the H-RDT baseline). Absolute values are small (<= 0.05), bounded by the modest distinctness of per-phase reasoning targets (mean cosine 0.70). This is **supporting** evidence; the primary evidence is the behavioral transfer above. See `analysis/mechanism_probing/README.md`.
+
+---
+
 
 ## Companion Repositories
 
