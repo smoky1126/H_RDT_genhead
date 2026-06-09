@@ -19,6 +19,8 @@ vs AVP-only baseline; 0.037 vs 0.016 vs H-RDT baseline). Absolute values are sma
 (<=0.05), bounded by the modest distinctness of per-phase reasoning targets
 (mean cosine 0.70). This is a supporting result; primary evidence is behavioral transfer.
 
+![Phase separability: dense vs pooled LSS](phase_separability.png)
+
 ## Reproduce
     export EGODEX_DATA_ROOT=/path/to/processed_baseline
     python diff_probe.py            # regenerates diff_cache.npz (~20 min, GPU)
