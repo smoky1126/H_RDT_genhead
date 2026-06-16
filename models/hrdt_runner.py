@@ -316,7 +316,8 @@ class HRDTRunner(
             self.model.gradient_checkpointing_enable(value)
 
     def compute_loss(self, state_tokens=None, action_gt=None, image_tokens=None, lang_tokens=None, lang_attn_mask=None, reasoning_token_ids=None, reasoning_head=None, reasoning_lambda=0.1, lsa_head=None, lsa_embeddings=None, lsa_attn_mask=None, lsa_lambda=0.1,
-                     dense_lsa_targets=None, dense_lsa_mask=None, use_dense_lsa=False):
+                     dense_lsa_targets=None, dense_lsa_mask=None, use_dense_lsa=False,
+                     dense_lsa_targets_R=None, dense_lsa_mask_R=None):
         """
             img_tokens: (batch_size, img_len, img_token_dim)
             state_tokens: (batch_size, chunk_size, action_dim), 
@@ -377,16 +378,27 @@ class HRDTRunner(
         # Dense LSA loss (Option D: per-token phase alignment)
         if use_dense:
             action_hidden = hidden[:, 1:, :]                  # (B, K, hidden_size)
-            projected = lsa_head(action_hidden, per_token=True)  # (B, K, t5_dim)
+            projected = lsa_head(action_hidden, per_token=True)  # (B, K, t5_dim) ONE projection
             p_norm = F.normalize(projected, dim=-1)
+            # --- TRACK 1 (single active hand for single-arm; hand-1 for bimanual) ---
             r_norm = F.normalize(dense_lsa_targets.float(), dim=-1)  # (B, K, t5_dim)
-            cos = (p_norm * r_norm).sum(dim=-1)               # (B, K) per-token similarity
-            loss_tok = (1 - cos)                              # (B, K)
+            cos = (p_norm * r_norm).sum(dim=-1)               # (B, K)
+            loss_tok = (1 - cos)
             if dense_lsa_mask is not None:
-                m = dense_lsa_mask.float()                    # (B, K) clean-token mask
-                lsa_loss_val = (loss_tok * m).sum() / m.sum().clamp(min=1)
+                m = dense_lsa_mask.float()
+                lsa_track1 = (loss_tok * m).sum() / m.sum().clamp(min=1)
             else:
-                lsa_loss_val = loss_tok.mean()
+                lsa_track1 = loss_tok.mean()
+            # --- TRACK 2 (empty/0 for single-arm; hand-2 for bimanual) ---
+            lsa_track2 = projected.new_zeros(())              # scalar 0 on correct device/dtype
+            if dense_lsa_targets_R is not None and dense_lsa_mask_R is not None:
+                r_norm_R = F.normalize(dense_lsa_targets_R.float(), dim=-1)
+                cos_R = (p_norm * r_norm_R).sum(dim=-1)
+                loss_tok_R = (1 - cos_R)
+                m_R = dense_lsa_mask_R.float()
+                # when m_R is all-zero (single-arm), this is 0/clamp(1) = 0 -> reduces to current
+                lsa_track2 = (loss_tok_R * m_R).sum() / m_R.sum().clamp(min=1)
+            lsa_loss_val = lsa_track1 + lsa_track2
             total_loss = diff_loss + lsa_lambda * lsa_loss_val
             return {"diff_loss": diff_loss, "lsa_loss": lsa_loss_val, "loss": total_loss}
 

@@ -199,39 +199,49 @@ class EgoDexDataset:
     def __len__(self):
         return len(self.data_files)
     
-    def _build_token_phase_targets(self, dense_pt_path, index, total_frames):
-        """Option-D per-token targets: for each of the chunk_size action tokens,
-        assign the pooled embedding of the phase its frame-triple sits in.
-        token t covers frames [index + t*UP, index + t*UP + UP).
-        token_mask[t] = True iff all UP frames of token t are in ONE phase (clean);
-        boundary tokens (straddle two phases) are masked out."""
-        d = torch.load(dense_pt_path, map_location="cpu", weights_only=False)
-        phase_frames = d["phase_frames"]            # list of (s,e)
-        phase_pooled = d["phase_pooled"]            # (n_phases, 4096) or None
+    def _assign_track(self, phase_frames, phase_pooled, index, total_frames):
+        """Per-track primitive: assign each of K action tokens to the pooled embedding
+        of the phase its frame-triple sits in. Returns (targets (K,t5_dim), mask (K,)) or None.
+        Single-arm calls once; bimanual calls twice. Logic identical to original."""
         UP = self.upsample_rate
         K = self.chunk_size
         if phase_pooled is None or len(phase_frames) == 0:
             return None
         t5_dim = phase_pooled.shape[1]
-
         def phase_of(fr):
             fr = min(fr, total_frames - 1)
             for i, (ps, pe) in enumerate(phase_frames):
                 if ps <= fr < pe:
                     return i
-            return len(phase_frames) - 1  # clamp to last phase
-
+            return len(phase_frames) - 1
         targets = torch.zeros(K, t5_dim, dtype=phase_pooled.dtype)
         mask = torch.zeros(K, dtype=torch.bool)
         for t in range(K):
             f0 = index + t * UP
-            phs = set(phase_of(f0 + j) for j in range(UP))  # phases this token touches
-            # dominant phase = phase of the token's first frame (or majority)
+            phs = set(phase_of(f0 + j) for j in range(UP))
             dom = phase_of(f0)
             targets[t] = phase_pooled[dom]
-            if len(phs) == 1:        # all UP frames in one phase -> clean token
+            if len(phs) == 1:
                 mask[t] = True
         return targets, mask
+
+    def _build_token_phase_targets(self, dense_pt_path, index, total_frames):
+        """Single-arm (old schema): one track. Bimanual (has phase_pooled_left): two tracks.
+        Returns single-arm: (targets, mask); bimanual: (tL, mL, tR, mR)."""
+        d = torch.load(dense_pt_path, map_location="cpu", weights_only=False)
+        if "phase_pooled_left" not in d:
+            # OLD SCHEMA (single-arm) -- identical behavior to before
+            return self._assign_track(d["phase_frames"], d["phase_pooled"], index, total_frames)
+        # NEW SCHEMA (bimanual): two tracks; empty track -> zeros + all-False mask (contributes 0)
+        K = self.chunk_size
+        pl = d.get("phase_pooled_left"); pr = d.get("phase_pooled_right")
+        t5_dim = (pl.shape[1] if pl is not None else (pr.shape[1] if pr is not None else 4096))
+        left = self._assign_track(d.get("phase_frames_left", []), pl, index, total_frames)
+        right = self._assign_track(d.get("phase_frames_right", []), pr, index, total_frames)
+        if left is None:  left  = (torch.zeros(K, t5_dim), torch.zeros(K, dtype=torch.bool))
+        if right is None: right = (torch.zeros(K, t5_dim), torch.zeros(K, dtype=torch.bool))
+        tL, mL = left; tR, mR = right
+        return (tL, mL, tR, mR)
 
     def get_item(self, idx=None):
         """

@@ -533,6 +533,12 @@ def train(args, logger):
                     dense_lsa_mask=(batch["dense_lsa_mask"].to(accelerator.device)
                                     if (hasattr(args, 'use_dense_lsa') and args.use_dense_lsa and "dense_lsa_mask" in batch)
                                     else None),
+                    dense_lsa_targets_R=(batch["dense_lsa_embeds_R"].to(accelerator.device, dtype=weight_dtype)
+                                       if (hasattr(args, 'use_dense_lsa') and args.use_dense_lsa and "dense_lsa_embeds_R" in batch)
+                                       else None),
+                    dense_lsa_mask_R=(batch["dense_lsa_mask_R"].to(accelerator.device)
+                                    if (hasattr(args, 'use_dense_lsa') and args.use_dense_lsa and "dense_lsa_mask_R" in batch)
+                                    else None),
                 )
                 
                 loss = loss_dict["loss"]

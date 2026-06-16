@@ -326,6 +326,7 @@ class DataCollatorForVLAConsumerDataset(object):
             lang_embeds = []
             lang_embed_lens = []
             dense_lsa_list = []; dense_lsa_mask_list = []; has_dense_lsa = False
+            dense_lsa_R_list = []; dense_lsa_mask_R_list = []; has_dense_lsa_R = False
         reasoning_token_ids_list = []
         has_reasoning_tokens = False
 
@@ -351,8 +352,19 @@ class DataCollatorForVLAConsumerDataset(object):
                 lang_embeds.append(instance["lang_embeds"])
                 lang_embed_lens.append(instance["lang_embeds"].shape[0])
             if instance.get("dense_lsa_embeds") is not None:
-                de, dm = instance["dense_lsa_embeds"]   # de:(K,4096) targets, dm:(K,) clean-token mask
-                dense_lsa_list.append(de); dense_lsa_mask_list.append(dm); has_dense_lsa = True
+                _dl = instance["dense_lsa_embeds"]
+                if len(_dl) == 2:
+                    # single-arm: (targets, mask) -- left track only, right track empty
+                    de, dm = _dl
+                    dense_lsa_list.append(de); dense_lsa_mask_list.append(dm); has_dense_lsa = True
+                    # right track: zeros + all-False mask (contributes 0 to loss)
+                    dense_lsa_R_list.append(torch.zeros_like(de))
+                    dense_lsa_mask_R_list.append(torch.zeros_like(dm)); has_dense_lsa_R = True
+                else:
+                    # bimanual: (tL, mL, tR, mR)
+                    deL, dmL, deR, dmR = _dl
+                    dense_lsa_list.append(deL); dense_lsa_mask_list.append(dmL); has_dense_lsa = True
+                    dense_lsa_R_list.append(deR); dense_lsa_mask_R_list.append(dmR); has_dense_lsa_R = True
             if "reasoning_token_ids" in instance:
                 reasoning_token_ids_list.append(instance["reasoning_token_ids"])
                 has_reasoning_tokens = True
@@ -388,8 +400,11 @@ class DataCollatorForVLAConsumerDataset(object):
             batch["lang_attn_mask"] = input_lang_attn_mask
         if has_dense_lsa and len(dense_lsa_list) == len(instances):
             # per-token targets are fixed (K,4096); just stack. mask is (K,) per instance.
-            batch["dense_lsa_embeds"] = torch.stack(dense_lsa_list, dim=0)   # (B,K,4096)
+            batch["dense_lsa_embeds"] = torch.stack(dense_lsa_list, dim=0)   # (B,K,4096)  LEFT track
             batch["dense_lsa_mask"] = torch.stack(dense_lsa_mask_list, dim=0)  # (B,K) bool
+        if has_dense_lsa_R and len(dense_lsa_R_list) == len(instances):
+            batch["dense_lsa_embeds_R"] = torch.stack(dense_lsa_R_list, dim=0)   # (B,K,4096) RIGHT track
+            batch["dense_lsa_mask_R"] = torch.stack(dense_lsa_mask_R_list, dim=0)  # (B,K) bool
         if has_reasoning_tokens and len(reasoning_token_ids_list) == len(instances):
             batch["reasoning_token_ids"] = torch.nn.utils.rnn.pad_sequence(
                 reasoning_token_ids_list,

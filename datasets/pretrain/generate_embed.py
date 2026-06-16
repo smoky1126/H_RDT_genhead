@@ -49,6 +49,43 @@ def _active_hand(a):
     rng = a.max(0) - a.min(0)
     return "left" if rng[0:24].sum() >= rng[24:48].sum() else "right"
 
+def _process_phase_list(phases, T, tokenizer, model, device):
+    """Per-track helper: phases -> (names, frames, phase_pooled, rats). Used by bimanual path."""
+    names, frames, embs, masks, rats = [], [], [], [], []
+    for ph in phases:
+        n = ph.get("name")
+        if n not in _DENSE_VALID: continue
+        s = max(0, int(round(ph["start_frac"] * T)))
+        e = min(T, max(s + 1, int(round(ph["end_frac"] * T))))
+        emb = get_t5_embedding(ph["rationale"], tokenizer, model, device).squeeze(0)
+        tk = tokenizer(ph["rationale"], return_tensors="pt", padding=False, truncation=True, max_length=128)
+        names.append(n); frames.append((s, e)); embs.append(emb)
+        masks.append(tk.attention_mask.squeeze(0)); rats.append(ph["rationale"])
+    phase_pooled = []
+    for emb, m in zip(embs, masks):
+        mm = m.unsqueeze(-1).float()
+        pooled = (emb * mm).sum(0) / mm.sum().clamp(min=1)
+        phase_pooled.append(pooled)
+    phase_pooled = torch.stack(phase_pooled, dim=0) if phase_pooled else None
+    return names, frames, phase_pooled, rats
+
+def _dense_process_ep_bimanual(ep, ann, hdf5_path, tokenizer, model, device):
+    """Bimanual: ann = {left_hand:{phases}, right_hand:{phases}} -> dual-track _dense.pt."""
+    with h5py.File(hdf5_path, "r") as f:
+        actions = np.array(f["actions_48d"][:])
+    T = len(actions)
+    lp = ann.get("left_hand", {}).get("phases", [])
+    rp = ann.get("right_hand", {}).get("phases", [])
+    nL, fL, ppL, ratL = _process_phase_list(lp, T, tokenizer, model, device)
+    nR, fR, ppR, ratR = _process_phase_list(rp, T, tokenizer, model, device)
+    flags = {}
+    if len(nL) < 1 or len(nR) < 1:
+        flags["low_phase_count"] = min(len(nL), len(nR))
+    return {"episode": ep, "episode_len": T, "bimanual": True,
+            "phase_names_left": nL, "phase_frames_left": fL, "phase_pooled_left": ppL, "phase_rationales_left": ratL,
+            "phase_names_right": nR, "phase_frames_right": fR, "phase_pooled_right": ppR, "phase_rationales_right": ratR,
+            "flags": flags}
+
 def _dense_process_ep(ep, phases, hdf5_path, tokenizer, model, device):
     with h5py.File(hdf5_path, "r") as f:
         actions = np.array(f["actions_48d"][:])
@@ -106,7 +143,11 @@ def run_dense(data_root, baseline_root, tokenizer, model, device):
         for ep, d in tqdm(ann.items(), desc=sn[:22]):
             hp = os.path.join(base_sd, f"{ep}.hdf5")  # actions from BASELINE
             if not os.path.exists(hp): miss += 1; continue
-            try: rec = _dense_process_ep(ep, d.get("phases", []), hp, tokenizer, model, device)
+            try:
+                if isinstance(d, dict) and ("left_hand" in d or "right_hand" in d):
+                    rec = _dense_process_ep_bimanual(ep, d, hp, tokenizer, model, device)
+                else:
+                    rec = _dense_process_ep(ep, d.get("phases", []), hp, tokenizer, model, device)
             except Exception as e: print(f"  FAIL {ep}: {repr(e)[:60]}"); continue
             torch.save(rec, os.path.join(base_sd, f"{ep}_dense.pt")); total += 1  # co-located
             if "low_phase_count" in rec["flags"]: flo += 1
