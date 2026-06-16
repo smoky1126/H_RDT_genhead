@@ -63,3 +63,52 @@ G5 regress: bottle dual-track -> 90/54/26                          (hrs, GPU)
 - two masked-cosine SUMMED (each self-normalized)
 - single-arm _dense.pt NOT regenerated (old schema -> unchanged path)
 - idle/active by --mode flag (human-set)
+
+────────────────────────────────────────────────────────────────────────
+## USAGE — Bimanual Dense LSS Pipeline (end-to-end)
+────────────────────────────────────────────────────────────────────────
+
+### Step 1: Discover phases (per-hand)
+    cd ~/human-policy/cet
+    python3 discover_phases.py \
+      --task_dir ~/human-policy/data/recordings/processed_baseline_unpack_groceries/part1 \
+      --tag groceries --discover --per_block 4 --mode bimanual
+    # -> discovered_phases_groceries.json (pools both hands' phase names)
+
+### Step 2: Review + lock vocab
+    python3 discover_phases.py --tag groceries --propose
+    # (edit proposed_merges_groceries.txt - reject merges you disagree with)
+    python3 discover_phases.py --tag groceries --lock
+    # -> phase_vocab_groceries.json
+
+### Step 3: Annotate (per-hand phased reasoning)
+    python3 annotate_reasoning.py --phased --mode bimanual \
+      --phase_set groceries --target_dir <session_dir>
+    # -> reasoning_phased.json with {left_hand:{phases}, right_hand:{phases}}
+
+### Step 4: Build dual-track _dense.pt
+    cd ~/H_RDT
+    python3 datasets/pretrain/generate_embed.py --dense \
+      --data_root     ~/human-policy/data/recordings/processed_baseline_unpack_groceries \
+      --baseline_root ~/human-policy/data/recordings/processed_baseline_unpack_groceries
+    # auto-detects bimanual -> writes phase_pooled_left/right + phase_frames_left/right
+    # (single-arm annotations still write old single-track schema)
+
+### Step 5: Train R4 dense (dual-track loss)
+    # pretrain.sh: EGODEX_DATA_ROOT=processed_baseline_unpack_groceries, --use_dense_lsa
+    bash pretrain.sh
+    # dual-track loss: lsa_track1 (hand-1) + lsa_track2 (hand-2)
+    # single-arm data: lsa_track2 = 0 (unchanged behavior)
+
+### Key behaviors
+- AUTO-DETECTION: generate_embed --dense detects bimanual ({left_hand,right_hand})
+  vs single-arm ({phases}) automatically. Same command for both.
+- SINGLE-ARM UNTOUCHED: bottle/tableware -> single-track schema, unchanged path.
+  Existing single-arm _dense.pt files do NOT need regeneration.
+- --mode bimanual flag is human-set at discovery + annotation. Embed + training
+  auto-handle bimanual from the data structure (no flag needed downstream).
+
+### Validation status
+- VERIFIED (unit): G2 token-assign byte-identical, G3 collate, G4 loss allclose.
+- PENDING: G5 bottle regression (90/54/26 through dual-track, needs GPU);
+           G1 full bimanual data test (needs locked groceries vocab).
