@@ -55,7 +55,7 @@ reasoning embeddings via LSAHead projection (2176→4096). L_total = L_diffusion
   Their Stage-2 pretrains (for reproducibility):
   - S2_RunC_reasoning-naive, S2_RunD_tokenpred, S2_LSS-simpletarget
 
-### transfer/  — R2-R4 transfer ladders (held-out robot tasks; R1 baselines in _base/finetunes/)
+### finetunes/  — R2-R4 transfer ladders (held-out robot tasks; R1 baselines in _base/finetunes/)
   shake_bottle (near-transfer, bottle-like):
     - R2_noLSS_shake_bottle_45pct
     - R3_pooledLSS_shake_bottle_39pct   (pooled HURTS here: 39 < 45)
@@ -83,7 +83,7 @@ reasoning embeddings via LSAHead projection (2176→4096). L_total = L_diffusion
   - S2_noLSS    = R2 tableware Stage-2 (AVP no-LSS), 10000 steps. [CURRENT]
   - [S2_pooledLSS, S2_denseLSS — INCOMING]
   Data: 449 part1 + 52 test episodes. Annotations verified 0-truncated (pooled + dense).
-### transfer/  [INCOMING — matched tasks: stack_bowls_two, move_can_pot]
+### finetunes/  [INCOMING — matched tasks: stack_bowls_two, move_can_pot]
 
 ═══════════════════════════════════════════════════════════════════════
 ## extracting_groceries/  — HMD-3 (BIMANUAL asymmetric: one hand stabilizes bag,
