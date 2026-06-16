@@ -32,7 +32,7 @@ def get_t5_embedding(text, tokenizer, model, device):
 
 # ===================== DENSE MODE (per-phase embeddings) =====================
 # Union of all phase vocabularies (bottle + tableware + future). Accepts any known phase.
-_DENSE_VALID = ["approach", "grip", "lift", "transport", "rotate", "insert", "place", "release", "withdraw"]
+_DENSE_VALID = ["approach", "grip", "lift", "transport", "rotate", "insert", "place", "release", "withdraw", "stabilize", "extract"]
 
 def _rotate_peak_frac(actions, active, search_end_frac=1.0):
     # search_end_frac: only look for the rotation peak BEFORE this frac
