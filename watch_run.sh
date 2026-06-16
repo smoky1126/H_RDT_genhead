@@ -1,5 +1,5 @@
 # To use:
-# bash ~/H_RDT/watch_run.sh ~/H_RDT/logs_XXX.txt
+# bash ~/H_RDT/watch_run.sh ~/H_RDT/checkpoints/tidying_tableware/finetunes/R3_pooledLSS_stack_bowls_two/train_log.txt
 
 LOG="${1:-}"
 N="${2:-8}"
@@ -7,20 +7,22 @@ N="${2:-8}"
 
 # ---- one-time parse from the log header: mode, task, backbone, output dir ----
 read_meta() {
-    MODE=$(grep -oE 'mode[ =]+"?(pretrain|finetune)' "$LOG" 2>/dev/null | grep -oE 'pretrain|finetune' | head -1)
-    [ -z "$MODE" ] && MODE=$(grep -qiE 'finetune mode with pretrained backbone' "$LOG" 2>/dev/null && echo finetune || echo "")
-    [ -z "$MODE" ] && MODE=$(grep -qiE 'LSAHead initialized|Constructing model from pretrained' "$LOG" 2>/dev/null && echo pretrain || echo "?")
+    PS=$(pgrep -af "main.py" 2>/dev/null | head -1)
+    # --- from log (reliable exact strings) ---
+    MODE=$(grep -oE 'initialized in (finetune|pretrain) mode' "$LOG" 2>/dev/null | grep -oE 'finetune|pretrain' | head -1)
     TASK=$(grep -oE 'Single task [a-z0-9_]+' "$LOG" 2>/dev/null | head -1 | awk '{print $3}')
-    [ -z "$TASK" ] && TASK=$(grep -oE -- '--task_name[ =]"?[a-z0-9_]+' "$LOG" 2>/dev/null | head -1 | grep -oE '[a-z0-9_]+$')
-    EPISODES=$(grep -oE 'Total [0-9]+ episodes' "$LOG" 2>/dev/null | head -1 | grep -oE '[0-9]+')
-    BB=$(grep -oE 'pretrained backbone from .*pytorch_model.bin' "$LOG" 2>/dev/null | head -1 | sed 's|.*/checkpoints/||;s|/pytorch_model.bin||')
-    [ -z "$BB" ] && BB=$(grep -oE -- '--pretrained_backbone_path[ =]"?[^ ]+' "$LOG" 2>/dev/null | head -1 | sed 's|.*/checkpoints/||;s|/pytorch_model.bin.*||')
+    EP=$(grep -oE 'Total [0-9]+ episodes' "$LOG" 2>/dev/null | head -1 | grep -oE '[0-9]+')
+    BB=$(grep -oE 'pretrained backbone from \./checkpoints/[A-Za-z0-9_.-]+' "$LOG" 2>/dev/null | head -1 | sed 's|.*/checkpoints/||')
+    [ -z "$BB" ] && BB=$(grep -oE 'Loading pretrained backbone from \./checkpoints/[A-Za-z0-9_.-]+' "$LOG" 2>/dev/null | head -1 | sed 's|.*/checkpoints/||')
     NBB=$(grep -oE 'Loaded backbone with [0-9]+ parameters' "$LOG" 2>/dev/null | head -1 | grep -oE '[0-9]+')
-    OUT=$(grep -oE -- '--output_dir[ =]"?[^ ]+' "$LOG" 2>/dev/null | head -1 | sed 's|.*=||;s|"||g')
-    [ -z "$OUT" ] && OUT=$(grep -oE 'checkpoints/[A-Za-z0-9_./-]+' "$LOG" 2>/dev/null | grep -vE 'pretrain-0618|pretrain_human' | head -1)
-    CKPT="$HOME/H_RDT/$OUT"
-    [ ! -d "$CKPT" ] && CKPT=$(dirname "$(ls -dt $HOME/H_RDT/checkpoints/*/checkpoint-* 2>/dev/null | head -1)" 2>/dev/null)
-    LSA=$(grep -qiE 'LSAHead initialized|use_lsa.*[Tt]rue|lsa_loss' "$LOG" 2>/dev/null && echo "ON" || echo "off")
+    OUT=$(grep -oE "checkpoints/[A-Za-z0-9_./-]+' already exists" "$LOG" 2>/dev/null | head -1 | sed "s|checkpoints/||;s|' already exists||;s|\./||")
+    [ -z "$OUT" ] && OUT=$(echo "$PS" | grep -oE -- '--output_dir[ =]"?[^ ]+' | sed 's|.*=||;s|"||g;s|\./||;s|checkpoints/||' | head -1)
+    CKPT="$HOME/H_RDT/checkpoints/$OUT"
+    # LSS detection
+    LSA="off"
+    echo "$PS" | grep -qE -- '--use_dense_lsa' && LSA="DENSE"
+    echo "$PS" | grep -qE -- '--use_lsa'       && LSA="pooled"
+    [ "$MODE" = "finetune" ] && LSA="off (finetune)"
 }
 read_meta
 

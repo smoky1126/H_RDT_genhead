@@ -24,9 +24,9 @@ export CFLAGS="-I/usr/include"
 export LDFLAGS="-L/usr/lib/x86_64-linux-gnu"
 export CUTLASS_PATH="/data/lingxuan/cutlass"
 
-export WANDB_PROJECT="hrdt_pretrain_baseline_lsa_ablation_mar23"
-export OUTPUT_DIR="./checkpoints/pretrain_baseline_lsa_ablation_mar23"
-export PRETRAINED_FOLDER="./checkpoints/pretrain-0618/checkpoint-500000"
+export WANDB_PROJECT="hrdt_R3_pooledLSS_tableware"
+export OUTPUT_DIR="./checkpoints/tidying_tableware/pretrains/S2_pooledLSS"
+export PRETRAINED_FOLDER="./checkpoints/_base/egodex_foundation/checkpoint-500000"
 
 export VISION_ENCODER_NAME="dino-siglip"
 source datasets/pretrain/setup_pretrain.sh
@@ -43,7 +43,7 @@ fi
 #     --deepspeed="./configs/zero2.json" \
 #     ...
 
-export EGODEX_DATA_ROOT="$HOME/human-policy/data/recordings/processed_baseline"
+export EGODEX_DATA_ROOT="$HOME/human-policy/data/recordings/processed_pooledLSS_tidy_tableware"
 echo "DeepSpeed Launching with Data Root: $EGODEX_DATA_ROOT"
 
 #WANDB_RUN_ID="89f02271" WANDB_RESUME="allow" 
@@ -55,7 +55,7 @@ accelerate launch --main_process_port 29500 main.py \
     --train_batch_size=16 \
     --sample_batch_size=1 \
     --max_train_steps=10000 \
-    --checkpointing_period=2000 \
+    --checkpointing_period=5000 \
     --sample_period=99999 \
     --checkpoints_total_limit=10 \
     --lr_scheduler="constant_with_warmup" \
@@ -75,12 +75,13 @@ accelerate launch --main_process_port 29500 main.py \
     --lora_alpha=16 \
     --use_lsa \
     --lsa_lambda=0.1 \
+    #--use_dense_lsa \
     #--resume_from_checkpoint="checkpoint-2000" \
     #--gradient_checkpointing
     
     # For finetune mode with specific robot embodiment, use these parameters instead:
     # --mode="finetune" \
-    # --pretrained_backbone_path="./checkpoints/pretrain-0618/pytorch_model.bin" \
+    # --pretrained_backbone_path="./checkpoints/_base/egodex_foundation/pytorch_model.bin" \
     # --config_path="configs/hrdt_finetune.yaml" \  # Config with different action_dim for target robot
     # --dataset_type="finetune" \
 

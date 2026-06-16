@@ -1,6 +1,7 @@
-## launch command:
-## cd ~/H_RDT && conda activate hrdt && bash finetune.sh 2>&1 | tee logs_XXX.txt
-
+## launch command for this script:
+# cd ~/H_RDT && conda activate hrdt && \
+# mkdir -p ./checkpoints/T_R2_tableware_stack_bowls_two && \
+# bash finetune.sh 2>&1 | tee ./checkpoints/T_R2_tableware_stack_bowls_two/train_log.txt
 
 # Remove/disable cluster-specific NCCL settings:
 # export NCCL_IB_HCA=mlx5_0:1,mlx5_1:1,mlx5_2:1,mlx5_3:1,mlx5_4:1,mlx5_7:1,mlx5_8:1,mlx5_9:1
@@ -20,9 +21,9 @@ export CFLAGS="-I/usr/include"
 export LDFLAGS="-L/usr/lib/x86_64-linux-gnu"
 #export CUTLASS_PATH="/data/lingxuan/cutlass"
 
-export WANDB_PROJECT="hrdt_shake_bottle_baseline_june4"
-export PRETRAINED_CHECKPOINT="./checkpoints/pretrain-0618/checkpoint-500000/pytorch_model.bin"
-export OUTPUT_DIR="./checkpoints/R1_hrdt-baseline_shake_bottle"
+export WANDB_PROJECT="T_R3_pooledLSS_tableware_stack_bowls_two"
+export PRETRAINED_CHECKPOINT="./checkpoints/tidying_tableware/pretrains/S2_pooledLSS/checkpoint-10000/pytorch_model.bin"
+export OUTPUT_DIR="./checkpoints/tidying_tableware/finetunes/R3_pooledLSS_stack_bowls_two"
 
 
 export VISION_ENCODER_NAME="dino-siglip"
@@ -44,7 +45,7 @@ fi
 # Original setup: accelerate launch --main_process_port 29500 main.py \
 # --deepspeed="./configs/zero1.json" \
 # --max_train_steps=1000000 \
-#WANDB_RUN_ID="ptic4v0o" WANDB_RESUME="allow" 
+#WANDB_RUN_ID="5ogbe6z1" WANDB_RESUME="allow" 
 accelerate launch main.py \
     --pretrained_vision_encoder_name_or_path=$VISION_ENCODER_NAME \
     --deepspeed="./configs/zero2.json" \
@@ -69,16 +70,16 @@ accelerate launch main.py \
     --mode="finetune" \
     --max_robot_episodes=50 \
     --pretrained_backbone_path="$PRETRAINED_CHECKPOINT" \
-    --task_name="shake_bottle" \
-    #--resume_from_checkpoint="checkpoint-3000" \
+    --task_name="stack_bowls_two" \
+    #--resume_from_checkpoint="checkpoint-6000" \
 
     #--gradient_checkpointing \
     
-    #pretrained_backbone_path="./checkpoints/pretrain-0618/checkpoint-500000/pytorch_model.bin"
+    #pretrained_backbone_path="./checkpoints/_base/egodex_foundation/checkpoint-500000/pytorch_model.bin"
 
     # For finetune mode with specific robot embodiment, use these parameters instead:
     # --mode="finetune" \
-    # --pretrained_backbone_path="./checkpoints/pretrain-0618/pytorch_model.bin" \
+    # --pretrained_backbone_path="./checkpoints/_base/egodex_foundation/pytorch_model.bin" \
     # --config_path="configs/hrdt_finetune.yaml" \  # Config with different action_dim for target robot
     # --dataset_type="finetune" \
 
