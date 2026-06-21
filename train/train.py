@@ -125,6 +125,16 @@ def train(args, logger):
     if args.seed is not None:
         set_seed(args.seed)
 
+    # === determinism: pin DataLoader sampling + worker RNG ===
+    import random as _py_random
+    _base_seed = args.seed if args.seed is not None else 42
+    def _seed_worker(worker_id):
+        _ws = (_base_seed + worker_id) % (2**32)
+        np.random.seed(_ws)
+        _py_random.seed(_ws)
+    _dl_gen = torch.Generator()
+    _dl_gen.manual_seed(_base_seed)
+
     # Handle the repository creation
     if accelerator.is_main_process:
         if args.output_dir is not None:
@@ -376,6 +386,8 @@ def train(args, logger):
         num_workers=args.dataloader_num_workers,
         pin_memory=True,
         persistent_workers=True,
+        generator=_dl_gen,
+        worker_init_fn=_seed_worker,
     )
     
     val_dataloader = torch.utils.data.DataLoader(

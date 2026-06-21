@@ -60,6 +60,27 @@ class EgoDexDataset:
         self.data_files = self._load_file_list()
         split_name = "test" if self.val else "train"
         print(f"Loaded {len(self.data_files)} {split_name} data files")
+
+        # === dense-tiling (gated by env EGODEX_TILE_DENSE=1; train split only) ===
+        self.tile_dense = (os.environ.get("EGODEX_TILE_DENSE", "0") == "1") and (not self.val)
+        self.window_index = None
+        if self.tile_dense:
+            import h5py as _h5
+            WIN = self.chunk_size * self.upsample_rate
+            wmap = []
+            for _ei, _fi in enumerate(self.data_files):
+                try:
+                    with _h5.File(_fi['hdf5'], 'r') as _f:
+                        _tf = list(_f['transforms'].values())[0].shape[0]
+                except Exception as _e:
+                    print(f"tile-scan skip {_fi['hdf5']}: {_e}"); continue
+                _mx = _tf - 2
+                if _mx < 0: continue
+                _last = _mx - WIN + 1
+                _starts = [0] if _last < 0 else (list(range(0, _last + 1, WIN)) or [0])
+                for _s in _starts: wmap.append((_ei, _s))
+            self.window_index = wmap
+            print(f"[TILE] dense-tiling ON: {len(self.data_files)} eps -> {len(wmap)} windows")
         
         # Load statistics for normalization
         self.action_min = None
@@ -197,6 +218,8 @@ class EgoDexDataset:
         return frames
     
     def __len__(self):
+        if getattr(self, "tile_dense", False) and self.window_index is not None:
+            return len(self.window_index)
         return len(self.data_files)
     
     def _assign_track(self, phase_frames, phase_pooled, index, total_frames):
@@ -253,7 +276,12 @@ class EgoDexDataset:
         if idx is None:
             idx = random.randint(0, len(self.data_files) - 1)
         
-        file_info = self.data_files[idx % len(self.data_files)]
+        _forced_start = None
+        if getattr(self, "tile_dense", False) and self.window_index is not None and idx is not None:
+            _ep_idx, _forced_start = self.window_index[idx % len(self.window_index)]
+            file_info = self.data_files[_ep_idx]
+        else:
+            file_info = self.data_files[idx % len(self.data_files)] if idx is not None else self.data_files[random.randint(0, len(self.data_files) - 1)]
         
         try:
             # Load HDF5 data
@@ -269,7 +297,10 @@ class EgoDexDataset:
                     return None
                 
                 # Random index for sampling
-                index = random.randint(0, max_index)
+                if _forced_start is not None:
+                    index = min(_forced_start, max_index)
+                else:
+                    index = random.randint(0, max_index)
                 
                 # Construct 48-dimensional actions using current index
                 current_action = self.construct_48d_action(f, [index])
