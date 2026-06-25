@@ -1,7 +1,7 @@
 ## launch command for this script:
 # cd ~/H_RDT && conda activate hrdt && \
 # mkdir -p ./checkpoints/T_R2_tableware_stack_bowls_two && \
-# bash finetune.sh 2>&1 | tee ./checkpoints/T_R2_tableware_stack_bowls_two/train_log.txt
+# bash finetune.sh 2>&1 | tee ./checkpoints/FT_dense90backbone_seed42/train_log.txt
 
 # Remove/disable cluster-specific NCCL settings:
 # export NCCL_IB_HCA=mlx5_0:1,mlx5_1:1,mlx5_2:1,mlx5_3:1,mlx5_4:1,mlx5_7:1,mlx5_8:1,mlx5_9:1
@@ -21,9 +21,11 @@ export CFLAGS="-I/usr/include"
 export LDFLAGS="-L/usr/lib/x86_64-linux-gnu"
 #export CUTLASS_PATH="/data/lingxuan/cutlass"
 
-export WANDB_PROJECT="T_R3_pooledLSS_tableware_stack_bowls_two"
-export PRETRAINED_CHECKPOINT="./checkpoints/tidying_tableware/pretrains/S2_pooledLSS/checkpoint-10000/pytorch_model.bin"
-export OUTPUT_DIR="./checkpoints/tidying_tableware/finetunes/R3_pooledLSS_stack_bowls_two"
+export RUN="FT_dense90backbone_seed42"
+export PRETRAINED_CHECKPOINT="./checkpoints/adjusting_bottle/pretrains/S2_denseLSS/pytorch_model.bin"
+export OUT_RUN="./checkpoints/adjusting_bottle/finetunes/$RUN"
+export OUTPUT_DIR="$OUT_RUN"
+export WANDB_PROJECT="$RUN"
 
 
 export VISION_ENCODER_NAME="dino-siglip"
@@ -36,9 +38,22 @@ else
 fi
 
 # For run in a single node/machine
-# accelerate launch main.py \
-#     --deepspeed="./configs/zero2.json" \
-#     ...
+# 
+log_manifest () {
+  local OUT="$1" SCRIPT="$2" M="$1/RUN_MANIFEST.txt"
+  mkdir -p "$OUT"; cp "$SCRIPT" "$OUT/$(basename "$SCRIPT").asrun"
+  { echo "=== $(date -u) ==="; echo "host: $(hostname)  cwd: $(pwd)"
+    echo "git: $(git rev-parse HEAD) [$(git rev-parse --abbrev-ref HEAD)]"
+    echo "--- uncommitted ---"; git status --porcelain
+    echo "EGODEX_DATA_ROOT=$EGODEX_DATA_ROOT"; echo "EGODEX_TILE_DENSE=$EGODEX_TILE_DENSE"
+    echo "PRETRAINED_CHECKPOINT=$PRETRAINED_CHECKPOINT"; echo "OUTPUT_DIR=$OUTPUT_DIR"
+    find "$EGODEX_DATA_ROOT" -name '*_dense.pt' 2>/dev/null | wc -l | sed 's/^/dense_pt_files: /'
+    python -c "import torch,deepspeed,transformers,accelerate as a;print('torch',torch.__version__,'ds',deepspeed.__version__,'tf',transformers.__version__,'acc',a.__version__)"
+  } > "$M"; pip freeze > "$OUT/pip_freeze.txt"; echo "manifest -> $M"
+}
+
+log_manifest "$OUT_RUN" "$0"
+
 
 #note: train_batch_size is per device
 
@@ -69,8 +84,9 @@ accelerate launch main.py \
     --training_mode="lang" \
     --mode="finetune" \
     --max_robot_episodes=50 \
+    --seed=42 \
     --pretrained_backbone_path="$PRETRAINED_CHECKPOINT" \
-    --task_name="stack_bowls_two" \
+    --task_name="adjust_bottle" \
     #--resume_from_checkpoint="checkpoint-6000" \
 
     #--gradient_checkpointing \

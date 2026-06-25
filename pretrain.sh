@@ -1,5 +1,7 @@
-## launch command:
-## cd ~/H_RDT && conda activate hrdt && bash pretrain.sh 2>&1 | tee logs_XXX.txt
+# launch command:
+# cd ~/H_RDT && conda activate hrdt && \
+# mkdir -p ./checkpoints/adjusting_bottle/pretrains/S2_denseLSS_seed42_run2 && \
+# bash pretrain.sh 2>&1 | tee ./checkpoints/adjusting_bottle/pretrains/S2_denseLSS_seed42_run2/train_log.txt
 
 
 # export NCCL_IB_HCA=mlx5_0:1,mlx5_1:1,mlx5_2:1,mlx5_3:1,mlx5_4:1,mlx5_7:1,mlx5_8:1,mlx5_9:1
@@ -24,8 +26,8 @@ export CFLAGS="-I/usr/include"
 export LDFLAGS="-L/usr/lib/x86_64-linux-gnu"
 export CUTLASS_PATH="/data/lingxuan/cutlass"
 
-export WANDB_PROJECT="hrdt_R3_pooledLSS_tableware"
-export OUTPUT_DIR="./checkpoints/tidying_tableware/pretrains/S2_pooledLSS"
+export WANDB_PROJECT="S2_denseLSS_seed42_run2"
+export OUTPUT_DIR="./checkpoints/adjusting_bottle/pretrains/S2_denseLSS_seed42_run2"
 export PRETRAINED_FOLDER="./checkpoints/_base/egodex_foundation/checkpoint-500000"
 
 export VISION_ENCODER_NAME="dino-siglip"
@@ -43,7 +45,8 @@ fi
 #     --deepspeed="./configs/zero2.json" \
 #     ...
 
-export EGODEX_DATA_ROOT="$HOME/human-policy/data/recordings/processed_pooledLSS_tidy_tableware"
+export EGODEX_DATA_ROOT="$HOME/human-policy/data/recordings/processed_baseline_adjust_bottle"
+export EGODEX_TILE_DENSE=0   # dense-tiling: deterministic windows (dense pretrain only)
 echo "DeepSpeed Launching with Data Root: $EGODEX_DATA_ROOT"
 
 #WANDB_RUN_ID="89f02271" WANDB_RESUME="allow" 
@@ -55,7 +58,7 @@ accelerate launch --main_process_port 29500 main.py \
     --train_batch_size=16 \
     --sample_batch_size=1 \
     --max_train_steps=10000 \
-    --checkpointing_period=5000 \
+    --checkpointing_period=2000 \
     --sample_period=99999 \
     --checkpoints_total_limit=10 \
     --lr_scheduler="constant_with_warmup" \
@@ -73,9 +76,9 @@ accelerate launch --main_process_port 29500 main.py \
     --use_lora \
     --lora_rank=8 \
     --lora_alpha=16 \
-    --use_lsa \
     --lsa_lambda=0.1 \
-    #--use_dense_lsa \
+    --seed=42 \
+    --use_dense_lsa \
     #--resume_from_checkpoint="checkpoint-2000" \
     #--gradient_checkpointing
     
