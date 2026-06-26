@@ -124,6 +124,13 @@ def train(args, logger):
     # If passed along, set the training seed now.
     if args.seed is not None:
         set_seed(args.seed)
+        # === determinism enforcement (added for seeded reproducibility) ===
+        import torch as _t, os as _os
+        _t.backends.cudnn.deterministic = True
+        _t.backends.cudnn.benchmark = False
+        _t.use_deterministic_algorithms(True, warn_only=True)
+        _os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
+        logger.info('Determinism enforced: cudnn.deterministic=True, deterministic_algorithms=True')
 
     # === determinism: pin DataLoader sampling + worker RNG ===
     import random as _py_random
