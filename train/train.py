@@ -126,10 +126,15 @@ def train(args, logger):
         set_seed(args.seed)
         # === determinism enforcement (added for seeded reproducibility) ===
         import torch as _t, os as _os
-        _t.backends.cudnn.deterministic = True
-        _t.backends.cudnn.benchmark = False
-        _t.use_deterministic_algorithms(True, warn_only=True)
-        _os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
+        if _os.environ.get('DISABLE_DET','0')=='1':
+            logger.info('DETERMINISM DISABLED via DISABLE_DET=1'); _det_skip=True
+        else:
+            _det_skip=False
+        if not _det_skip:
+            _t.backends.cudnn.deterministic = True
+            _t.backends.cudnn.benchmark = False
+            _t.use_deterministic_algorithms(True, warn_only=True)
+            _os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
         logger.info('Determinism enforced: cudnn.deterministic=True, deterministic_algorithms=True')
 
     # === determinism: pin DataLoader sampling + worker RNG ===

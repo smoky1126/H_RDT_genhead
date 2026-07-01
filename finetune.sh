@@ -1,7 +1,8 @@
 ## launch command for this script:
-# cd ~/H_RDT && conda activate hrdt && \
-# mkdir -p ./checkpoints/T_R2_tableware_stack_bowls_two && \
-# bash finetune.sh 2>&1 | tee ./checkpoints/FT_dense90backbone_seed42/train_log.txt
+# cd ~/H_RDT && conda activate hrdt
+# mkdir -p ./checkpoints/adjusting_bottle/finetunes/R2_BS64_noLSS_seed42
+# bash finetune.sh 2>&1 | tee ./checkpoints/adjusting_bottle/finetunes/R2_BS64_noLSS_seed42/log.txt
+
 
 # Remove/disable cluster-specific NCCL settings:
 # export NCCL_IB_HCA=mlx5_0:1,mlx5_1:1,mlx5_2:1,mlx5_3:1,mlx5_4:1,mlx5_7:1,mlx5_8:1,mlx5_9:1
@@ -21,11 +22,11 @@ export CFLAGS="-I/usr/include"
 export LDFLAGS="-L/usr/lib/x86_64-linux-gnu"
 #export CUTLASS_PATH="/data/lingxuan/cutlass"
 
-export RUN="FT_dense90backbone_seed42"
-export PRETRAINED_CHECKPOINT="./checkpoints/adjusting_bottle/pretrains/S2_denseLSS/pytorch_model.bin"
-export OUT_RUN="./checkpoints/adjusting_bottle/finetunes/$RUN"
+export RUN="R4_BS64_BS64dense_seed42"
+export PRETRAINED_CHECKPOINT="./checkpoints/adjusting_bottle/pretrains/S2_noLSS_seed42_batch64/checkpoint-10000/pytorch_model.bin"
+export OUT_RUN="./checkpoints/adjusting_bottle/finetunes/R2_BS64_noLSS_seed42"
 export OUTPUT_DIR="$OUT_RUN"
-export WANDB_PROJECT="$RUN"
+export WANDB_PROJECT="R2_BS64_noLSS_seed42"
 
 
 export VISION_ENCODER_NAME="dino-siglip"
@@ -58,18 +59,18 @@ log_manifest "$OUT_RUN" "$0"
 #note: train_batch_size is per device
 
 # Original setup: accelerate launch --main_process_port 29500 main.py \
-# --deepspeed="./configs/zero1.json" \
-# --max_train_steps=1000000 \
+# --deepspeed="./configs/zero2_bs16.json" \
+# --max_train_steps=5500 \
 #WANDB_RUN_ID="5ogbe6z1" WANDB_RESUME="allow" 
 accelerate launch main.py \
     --pretrained_vision_encoder_name_or_path=$VISION_ENCODER_NAME \
-    --deepspeed="./configs/zero2.json" \
+    --deepspeed="./configs/zero2_bs64.json" \
     --config_path="configs/hrdt_finetune.yaml" \
     --output_dir=$OUTPUT_DIR \
-    --train_batch_size=16 \
+    --train_batch_size=8 \
     --sample_batch_size=1 \
-    --max_train_steps=22000 \
-    --checkpointing_period=3000 \
+    --max_train_steps=10000 \
+    --checkpointing_period=5000 \
     --sample_period=500 \
     --checkpoints_total_limit=5 \
     --lr_scheduler="constant_with_warmup" \
@@ -85,6 +86,7 @@ accelerate launch main.py \
     --mode="finetune" \
     --max_robot_episodes=50 \
     --seed=42 \
+    --gradient_accumulation_steps=4 \
     --pretrained_backbone_path="$PRETRAINED_CHECKPOINT" \
     --task_name="adjust_bottle" \
     #--resume_from_checkpoint="checkpoint-6000" \

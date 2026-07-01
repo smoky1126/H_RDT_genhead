@@ -1,5 +1,5 @@
 # To use:
-# bash ~/H_RDT/watch_run.sh ~/H_RDT/checkpoints/tidying_tableware/finetunes/R3_pooledLSS_stack_bowls_two/train_log.txt
+# bash ~/H_RDT/watch_run.sh ~/H_RDT/checkpoints/adjusting_bottle/finetunes/R4_BS64_BS64dense_seed42/log.txt
 
 LOG="${1:-}"
 N="${2:-8}"
