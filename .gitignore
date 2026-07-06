@@ -28,3 +28,4 @@ __pycache__/
 # env
 *.egg-info/
 .venv/
+checkpoints
