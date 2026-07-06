@@ -281,6 +281,8 @@ class VLAConsumerDataset(Dataset):
 
         if res.get("dense_lsa_embeds") is not None:
             data_dict["dense_lsa_embeds"] = res["dense_lsa_embeds"]
+        if res.get("reasoning_token_ids") is not None:
+            data_dict["reasoning_token_ids"] = res["reasoning_token_ids"]  # per-phase rationale ids
         if self.use_precomp_lang_embed:
             # All datasets should provide lang_embeds as tensor
             if "lang_embeds" in res:
@@ -291,9 +293,9 @@ class VLAConsumerDataset(Dataset):
                 # Legacy: load from file path
                 pt_data = torch.load(res["instruction"])
                 data_dict["lang_embeds"] = pt_data["embeddings"].squeeze(0)
-                # Load token IDs if available (for reasoning auxiliary loss)
-                if "token_ids" in pt_data:
-                    data_dict["reasoning_token_ids"] = pt_data["token_ids"]
+                # (disabled) episode-level token_ids overwrote per-phase rationale — per-phase set in get_item
+                # if "token_ids" in pt_data:
+                #     data_dict["reasoning_token_ids"] = pt_data["token_ids"]
 
         # Convert all numpy arrays to torch tensors
         for k, v in data_dict.items():

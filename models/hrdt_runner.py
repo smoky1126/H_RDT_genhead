@@ -15,22 +15,37 @@ from models.hrdt.model import HRDT
 
 class ReasoningHead(nn.Module):
     """
-    Auxiliary reasoning prediction head.
-    Training-only scaffold — never saved, never used at inference.
+    Auxiliary reasoning head. Generates the phase rationale by CROSS-ATTENDING to the
+    16 action tokens (hidden[:,1:]), NOT the state token. Weak positional prior so the
+    output must depend on the action tokens. Training-only scaffold; dropped at inference.
     """
-    def __init__(self, hidden_size=2176, vocab_size=32100, max_seq_len=150):
+    def __init__(self, hidden_size=2176, vocab_size=32100, max_seq_len=160, num_heads=8):
         super().__init__()
-        self.context_proj = nn.Linear(hidden_size, hidden_size)
+        self.in_ln = nn.LayerNorm(hidden_size)   # CRITICAL: action tokens have norm ~59k; normalize or training diverges
+        self.tok_emb = nn.Embedding(vocab_size, hidden_size)
         self.pos_emb = nn.Embedding(max_seq_len, hidden_size)
-        self.output_proj = nn.Linear(hidden_size, vocab_size)
+        self.self_attn  = nn.MultiheadAttention(hidden_size, num_heads, batch_first=True)
+        self.cross_attn = nn.MultiheadAttention(hidden_size, num_heads, batch_first=True)
+        self.ln1 = nn.LayerNorm(hidden_size)
+        self.ln2 = nn.LayerNorm(hidden_size)
+        self.ln3 = nn.LayerNorm(hidden_size)
+        self.ffn = nn.Sequential(nn.Linear(hidden_size, hidden_size), nn.GELU(),
+                                 nn.Linear(hidden_size, hidden_size))
+        self.out = nn.Linear(hidden_size, vocab_size)
+        nn.init.normal_(self.out.weight, std=0.02); nn.init.zeros_(self.out.bias)
         self.max_seq_len = max_seq_len
 
-    def forward(self, state_hidden, seq_len):
-        positions = torch.arange(seq_len, device=state_hidden.device)
-        pos_emb = self.pos_emb(positions)
-        context = self.context_proj(state_hidden).unsqueeze(1) + pos_emb.unsqueeze(0)
-        logits = self.output_proj(context)
-        return logits
+    def forward(self, action_tokens, input_ids):
+        # action_tokens: (B, K, D) -- the 16 action tokens.  input_ids: (B, L) teacher-forced.
+        action_tokens = self.in_ln(action_tokens)   # normalize large-magnitude hiddens
+        B, L = input_ids.shape
+        pos = torch.arange(L, device=input_ids.device)
+        x = self.tok_emb(input_ids) + 0.1 * self.pos_emb(pos).unsqueeze(0)   # weak positional prior
+        causal = torch.triu(torch.ones(L, L, device=x.device, dtype=torch.bool), 1)
+        h = self.ln1(x); x = x + self.self_attn(h, h, h, attn_mask=causal, need_weights=False)[0]
+        h = self.ln2(x); x = x + self.cross_attn(h, action_tokens, action_tokens, need_weights=False)[0]
+        x = x + self.ffn(self.ln3(x))
+        return self.out(x)   # (B, L, vocab)
 
 
 class LSAHead(nn.Module):
@@ -364,13 +379,13 @@ class HRDTRunner(
 
         # Reasoning auxiliary loss (token prediction)
         if use_reasoning:
-            state_hidden = hidden[:, 0, :]
-            seq_len = reasoning_token_ids.shape[1]
-            reasoning_logits = reasoning_head(state_hidden, seq_len)
+            action_hidden = hidden[:, 1:, :]                       # (B, K, D) -- the 16 action tokens
+            ids = reasoning_token_ids.long()                      # (B, L)
+            logits = reasoning_head(action_hidden, ids[:, :-1])   # predict tokens 1..L-1
             reasoning_loss = F.cross_entropy(
-                reasoning_logits.reshape(-1, reasoning_logits.shape[-1]),
-                reasoning_token_ids.reshape(-1).long(),
-                ignore_index=0
+                logits.reshape(-1, logits.shape[-1]),
+                ids[:, 1:].reshape(-1),
+                ignore_index=0,                                   # T5 pad id = 0
             )
             total_loss = diff_loss + reasoning_lambda * reasoning_loss
             return {"diff_loss": diff_loss, "reasoning_loss": reasoning_loss, "loss": total_loss}

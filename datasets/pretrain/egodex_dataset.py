@@ -248,6 +248,30 @@ class EgoDexDataset:
                 mask[t] = True
         return targets, mask
 
+
+    def _phase_rationale_ids(self, dense_pt_path, index, total_frames, max_len=64):
+        """Return T5 token ids for the rationale of the phase at the sampled state frame `index`.
+        Chunk-start alignment: the 48-frame action chunk may cross phases; we label by the
+        phase containing `index` (token 0), the phase the chunk begins in. Honest approximation."""
+        if not hasattr(self, "_t5tok") or self._t5tok is None:
+            from transformers import T5Tokenizer
+            self._t5tok = T5Tokenizer.from_pretrained("/home/ubuntu/H_RDT_genhead/models/t5-v1_1-xxl")
+        d = torch.load(dense_pt_path, map_location="cpu", weights_only=False)
+        # single-arm schema uses phase_frames + phase_rationales; bimanual uses left as primary
+        pf = d.get("phase_frames") or d.get("phase_frames_left")
+        rats = d.get("phase_rationales") or d.get("phase_rationales_left")
+        if not pf or not rats:
+            return None
+        fr = min(index, total_frames - 1)
+        dom = len(pf) - 1
+        for i, (ps, pe) in enumerate(pf):
+            if ps <= fr < pe:
+                dom = i; break
+        dom = min(dom, len(rats) - 1)
+        ids = self._t5tok(rats[dom], return_tensors="pt", truncation=True,
+                          max_length=max_len).input_ids.squeeze(0)
+        return ids
+
     def _build_token_phase_targets(self, dense_pt_path, index, total_frames):
         """Single-arm (old schema): one track. Bimanual (has phase_pooled_left): two tracks.
         Returns single-arm: (targets, mask); bimanual: (tL, mL, tR, mR)."""
@@ -345,6 +369,14 @@ class EgoDexDataset:
                 except Exception as e:
                     print(f"dense token-target build failed: {e}")
                     dense_lsa = None
+
+            reasoning_ids = None
+            if file_info.get('dense_pt') is not None:
+                try:
+                    reasoning_ids = self._phase_rationale_ids(file_info['dense_pt'], index, total_frames)
+                except Exception as e:
+                    print(f"phase rationale build failed: {e}")
+                    reasoning_ids = None
             
             return {
                 'states': current_action,  # (1, 48)
@@ -354,6 +386,7 @@ class EgoDexDataset:
                 'current_images_mask': [np.ones(self.img_history_size, dtype=bool)],  # Image mask
                 'instruction': str(lang_embed_path),  # Language embedding file path
                 'dense_lsa_embeds': dense_lsa,  # (phase_emb, phase_mask) or None
+                'reasoning_token_ids': reasoning_ids,  # (L,) T5 ids of phase-at-index rationale
                 'dataset_name': self.DATASET_NAME,
                 'task': file_info['task'],
                 'file_info': {

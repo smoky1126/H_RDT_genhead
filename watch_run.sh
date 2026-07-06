@@ -1,5 +1,5 @@
 # To use:
-# bash ~/H_RDT/watch_run.sh ~/H_RDT/checkpoints/adjusting_bottle/finetunes/R4_BS64_BS64dense_seed42/log.txt
+# bash watch_run.sh ./checkpoints/adjusting_bottle/finetunes/R2_noLSS_move_can_pot_seed42/log.txt
 
 LOG="${1:-}"
 N="${2:-8}"
@@ -22,6 +22,7 @@ read_meta() {
     LSA="off"
     echo "$PS" | grep -qE -- '--use_dense_lsa' && LSA="DENSE"
     echo "$PS" | grep -qE -- '--use_lsa'       && LSA="pooled"
+    echo "$PS" | grep -qE -- '--use_reasoning_head' && LSA="genhead(λ=$(echo "$PS" | grep -oE -- '--reasoning_lambda[ =][0-9.]+' | grep -oE '[0-9.]+' | head -1))"
     [ "$MODE" = "finetune" ] && LSA="off (finetune)"
 }
 read_meta
@@ -39,10 +40,11 @@ while true; do
     RATE=$(echo "$PROG" | grep -oE '[0-9.]+s/it' | head -1)
     LOSS=$(echo "$PROG" | grep -oE 'loss=[0-9.e-]+' | head -1)
     DIFF=$(echo "$PROG" | grep -oE 'diff_loss=[0-9.e-]+' | head -1)
+    RSN=$(echo "$PROG" | grep -oE 'reasoning_loss=[0-9.e-]+' | head -1)
     LR=$(echo "$PROG"   | grep -oE 'lr=[0-9.e-]+' | head -1)
 
     echo -e "===== H-RDT MONITOR  $(date '+%H:%M:%S')   status: $ST ====="
-    echo "run     : mode=${MODE:-?}  task=${TASK:-?}  episodes=${EPISODES:-?}  LSS=${LSA}"
+    echo "run     : mode=${MODE:-?}  task=${TASK:-?}  episodes=${EP:-?}  LSS=${LSA}"
     echo "backbone: ${BB:-?}  (${NBB:-?} params loaded)"
     echo "outdir  : $(basename "${CKPT:-?}")"
     echo "------------------------------------------------------------"
@@ -51,7 +53,7 @@ while true; do
         awk -F',' '{printf "GPU%s: util %3s%%  mem %5s/%5sMiB  %sC  %sW\n",$1,$2,$3,$4,$5,$6}'
     echo "------------------------------------------------------------"
     echo "progress: ${CUR:-?}  (${PCT:-?})   elapsed ${ELAP:-?}  ETA ${ETA:-?}  @ ${RATE:-?}"
-    echo "loss    : ${LOSS:-?}   ${DIFF:-}   ${LR:-}"
+    echo "loss    : ${LOSS:-?}   ${DIFF:-}   ${RSN:-}   ${LR:-}"
     CKPTS=$(ls -1d "$CKPT"/checkpoint-* 2>/dev/null | sed 's|.*/checkpoint-||' | sort -n | tr '\n' ' ')
     echo "ckpts   : ${CKPTS:-none yet}"
     [ -f "$CKPT/pytorch_model.bin" ] && echo "FINAL   : pytorch_model.bin present (run complete)"

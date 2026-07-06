@@ -1,7 +1,30 @@
+# heavy / symlinked dirs — never push
 checkpoints/
-models/t5-v1_1-xxl/
 bak/
+models/t5-v1_1-xxl/
+models/dino-siglip/
 wandb/
-*.npz
+.cache/
+
+# data
+*.pt
+*.hdf5
+*.mp4
+*.bin
+*.safetensors
+
+# logs / run artifacts
+*.log
+train_log.txt
+*.asrun
+RUN_MANIFEST.txt
+pip_freeze.txt
+
+# python
 __pycache__/
-*.bak*
+*.pyc
+.ipynb_checkpoints/
+
+# env
+*.egg-info/
+.venv/

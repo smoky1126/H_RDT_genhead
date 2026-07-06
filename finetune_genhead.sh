@@ -1,7 +1,7 @@
-## launch command for this script:
-# cd ~/H_RDT_genhead && conda activate hrdt
-# mkdir -p ./checkpoints/adjusting_bottle/finetunes/R2_noLSS_move_can_pot_seed42
-# bash finetune.sh 2>&1 | tee ./checkpoints/adjusting_bottle/finetunes/R2_noLSS_move_can_pot_seed42/log.txt
+# launch command for this script:
+# cd ~/H_RDT && conda activate hrdt
+# mkdir -p ./checkpoints/_base/finetunes/R1_baseline_move_can_pot_BS64_seed42
+# bash finetune_genhead.sh 2>&1 | tee ./checkpoints/_base/finetunes/R1_baseline_move_can_pot_BS64_seed42/log.txt
 
 
 # Remove/disable cluster-specific NCCL settings:
@@ -22,11 +22,11 @@ export CFLAGS="-I/usr/include"
 export LDFLAGS="-L/usr/lib/x86_64-linux-gnu"
 #export CUTLASS_PATH="/data/lingxuan/cutlass"
 
-export RUN="R2_noLSS_move_can_pot_seed42"
-export PRETRAINED_CHECKPOINT="./checkpoints/adjusting_bottle/pretrains/S2_noLSS_seed42_batch64/pytorch_model.bin"
-export OUT_RUN="./checkpoints/adjusting_bottle/finetunes/R5_genhead_move_can_pot_seed42"
+export RUN="R1_baseline_move_can_pot_BS64_seed42"
+export PRETRAINED_CHECKPOINT="./checkpoints/_base/egodex_foundation/checkpoint-5000000/pytorch_model.bin"
+export OUT_RUN="./checkpoints/_base/finetunes/R1_baseline_move_can_pot_BS64_seed42"
 export OUTPUT_DIR="$OUT_RUN"
-export WANDB_PROJECT="R2_noLSS_move_can_pot_seed42"
+export WANDB_PROJECT="R1_baseline_move_can_pot_BS64_seed42"
 
 
 export VISION_ENCODER_NAME="dino-siglip"
